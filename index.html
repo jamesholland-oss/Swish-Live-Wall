@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Swish Live Wall</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="live-dot"></span>
+      <div>
+        <strong>SWISH LIVE WALL</strong>
+        <small>PUBLIC STREAM MULTIVIEW • <span id="statusText">LOW-RESOURCE WALL</span></small>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="muteAllBtn">Unmute Selected</button>
+      <button id="refreshAllBtn">Refresh All</button>
+      <button id="editBtn" class="primary">Edit Streams</button>
+    </div>
+  </header>
+
+  <main id="grid" class="grid"></main>
+
+  <div id="editor" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <h2>Edit Streams</h2>
+          <p>Change a name or paste a new public stream URL. Settings stay saved on this computer.</p>
+        </div>
+        <button id="closeEditorBtn" class="icon-btn">✕</button>
+      </div>
+      <div id="editorRows" class="editor-rows"></div>
+      <div class="modal-actions">
+        <button id="cancelBtn">Cancel</button>
+        <button id="saveBtn" class="primary">Save & Reload</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
