@@ -1,12 +1,14 @@
 {
   "name": "swish-live-wall",
   "version": "1.3.0",
-  "description": "Low-resource 10-up multiview wall for Swish public livestream pages",
+  "description": "Swish Control — live multiview, protected room health dashboard, incidents, and background room agent",
   "main": "main.js",
   "author": "Swish Breaks",
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
+    "start:server": "node control-server/server.js",
+    "start:agent": "node agent/agent.js",
     "dist:mac": "electron-builder --mac dmg zip --publish never",
     "dist:win": "electron-builder --win nsis portable --publish never",
     "dist": "electron-builder -mwl --publish never"
@@ -16,8 +18,8 @@
     "electron-builder": "latest"
   },
   "build": {
-    "appId": "com.swishbreaks.livewall",
-    "productName": "Swish Live Wall",
+    "appId": "com.swishbreaks.control",
+    "productName": "Swish Control",
     "asar": true,
     "files": [
       "main.js",
@@ -25,6 +27,7 @@
       "renderer.js",
       "index.html",
       "styles.css",
+      "agent/**/*",
       "package.json"
     ],
     "mac": {
