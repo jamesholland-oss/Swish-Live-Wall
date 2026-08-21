@@ -3,6 +3,11 @@ const path = require('path');
 const fs = require('fs');
 const { startAgent } = require('./agent/agent');
 
+// Keep existing Swish Live Wall settings/cookies when an installed V1 app is upgraded
+// to the Swish Control product name. Fresh installs use the normal Swish Control path.
+const legacyUserData = path.join(app.getPath('appData'), 'Swish Live Wall');
+if (fs.existsSync(legacyUserData)) app.setPath('userData', legacyUserData);
+
 app.commandLine.appendSwitch('disk-cache-size', String(64 * 1024 * 1024));
 app.commandLine.appendSwitch('media-cache-size', String(32 * 1024 * 1024));
 app.commandLine.appendSwitch('disable-component-update');
@@ -40,11 +45,8 @@ function jsonPath(name) {
 }
 
 function readJson(file, fallback) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (_) {
-    return fallback;
-  }
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (_) { return fallback; }
 }
 
 function writeJson(file, value) {
@@ -86,7 +88,6 @@ function normalizeStream(stream, index) {
   const platform = ['Fanatics', 'Whatnot', 'TikTok', 'Other'].includes(stream.platform)
     ? stream.platform
     : inferPlatform(stream.url);
-
   return {
     id: String(stream.id || `stream-${Date.now()}-${index}`).trim(),
     name: String(stream.name || `Stream ${index + 1}`).trim(),
@@ -98,9 +99,7 @@ function normalizeStream(stream, index) {
 
 function loadStreams() {
   const saved = readJson(jsonPath('streams.json'), null);
-  if (Array.isArray(saved) && saved.length >= 1 && saved.length <= 150) {
-    return saved.map(normalizeStream);
-  }
+  if (Array.isArray(saved) && saved.length >= 1 && saved.length <= 150) return saved.map(normalizeStream);
   return DEFAULT_STREAMS.map(normalizeStream);
 }
 
@@ -164,10 +163,7 @@ function createWindow() {
 function configureLoginItem(role) {
   if (!app.isPackaged) return;
   try {
-    app.setLoginItemSettings({
-      openAtLogin: role === 'agent',
-      openAsHidden: role === 'agent'
-    });
+    app.setLoginItemSettings({ openAtLogin: role === 'agent', openAsHidden: role === 'agent' });
   } catch (err) {
     console.error('Unable to update login item:', err.message);
   }
@@ -176,7 +172,6 @@ function configureLoginItem(role) {
 async function startAgentMode(config) {
   if (stopAgent) return;
   if (process.platform === 'darwin' && app.dock) app.dock.hide();
-
   stopAgent = startAgent({
     serverUrl: config.serverUrl,
     roomName: config.roomName,
@@ -196,7 +191,6 @@ async function startAgentMode(config) {
 function registerIpc() {
   ipcMain.handle('streams:get', () => loadStreams());
   ipcMain.handle('streams:save', (_event, streams) => saveStreams(streams));
-
   ipcMain.handle('app:get-config', () => loadAppConfig());
   ipcMain.handle('app:save-config', (_event, patch) => {
     const allowed = {
@@ -213,7 +207,6 @@ function registerIpc() {
     configureLoginItem(config.role);
     return config;
   });
-
   ipcMain.handle('app:restart', () => {
     app.relaunch();
     app.exit(0);
@@ -233,25 +226,17 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     configureStreamSession();
     registerIpc();
-
     app.on('web-contents-created', (_event, contents) => {
       contents.setWindowOpenHandler(() => ({ action: 'deny' }));
       contents.backgroundThrottling = true;
     });
 
     let config = loadAppConfig();
-
-    if (process.argv.includes('--reset-role')) {
-      config = saveAppConfig({ role: '' });
-    }
-
+    if (process.argv.includes('--reset-role')) config = saveAppConfig({ role: '' });
     configureLoginItem(config.role);
 
-    if (config.role === 'agent') {
-      await startAgentMode(config);
-    } else {
-      createWindow();
-    }
+    if (config.role === 'agent') await startAgentMode(config);
+    else createWindow();
 
     app.on('activate', () => {
       const latest = loadAppConfig();
