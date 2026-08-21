@@ -3,43 +3,160 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Swish Live Wall</title>
+  <title>Swish Control</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="live-dot"></span>
-      <div>
-        <strong>SWISH LIVE WALL</strong>
-        <small>PUBLIC STREAM MULTIVIEW • <span id="statusText">LOW-RESOURCE WALL</span></small>
-      </div>
-    </div>
-    <div class="actions">
-      <button id="muteAllBtn">Unmute Selected</button>
-      <button id="refreshAllBtn">Refresh All</button>
-      <button id="editBtn" class="primary">Edit Streams</button>
+  <header id="topbar" class="topbar">
+    <div class="brand">SWISH CONTROL</div>
+
+    <nav id="techNav" class="nav hidden">
+      <button class="nav-btn" data-page="overview">Overview</button>
+      <button class="nav-btn active" data-page="wall">Live Wall</button>
+      <button class="nav-btn" data-page="rooms">Rooms</button>
+      <button class="nav-btn" data-page="incidents">Incidents</button>
+    </nav>
+
+    <div class="top-actions">
+      <button id="signInBtn" class="ghost hidden">Sign In</button>
+      <button id="profileBtn" class="profile hidden" title="Control user"></button>
     </div>
   </header>
 
-  <main id="grid" class="grid"></main>
+  <main id="appRoot" class="app-root">
+    <section id="overviewPage" class="page hidden">
+      <div id="overviewSummary" class="summary-grid"></div>
+      <div id="overviewRooms" class="overview-rooms"></div>
+    </section>
 
-  <div id="editor" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-head">
-        <div>
-          <h2>Edit Streams</h2>
-          <p>Change a name or paste a new public stream URL. Settings stay saved on this computer.</p>
-        </div>
-        <button id="closeEditorBtn" class="icon-btn">✕</button>
+    <section id="wallPage" class="page">
+      <div class="wall-toolbar">
+        <div id="platformFilters" class="filters"></div>
+        <div class="toolbar-spacer"></div>
+        <button id="refreshAllBtn" class="icon-action" title="Refresh all streams">↻</button>
+        <button id="manageStreamsBtn" class="ghost">Streams</button>
       </div>
-      <div id="editorRows" class="editor-rows"></div>
-      <div class="modal-actions">
-        <button id="cancelBtn">Cancel</button>
-        <button id="saveBtn" class="primary">Save & Reload</button>
+      <div id="wallGrid" class="wall-grid"></div>
+    </section>
+
+    <section id="roomsPage" class="page hidden">
+      <div class="rooms-layout">
+        <div id="roomsList" class="rooms-list"></div>
+        <div id="roomDetail" class="room-detail"></div>
+      </div>
+    </section>
+
+    <section id="incidentsPage" class="page hidden">
+      <div class="incidents-card">
+        <div class="incidents-head">
+          <h2>Incidents</h2>
+          <span id="incidentCount" class="muted"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Started</th>
+                <th>Room</th>
+                <th>Event</th>
+                <th>Status</th>
+                <th>Resolved</th>
+              </tr>
+            </thead>
+            <tbody id="incidentsBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="setupModal" class="modal hidden">
+    <div class="modal-card setup-card">
+      <div class="modal-title">SWISH CONTROL</div>
+      <h1>Set up this Mac</h1>
+      <div class="role-grid">
+        <button class="role-card" data-role="wall">
+          <strong>Live Wall</strong>
+          <span>Public multiview only</span>
+        </button>
+        <button class="role-card" data-role="control">
+          <strong>Control Center</strong>
+          <span>Live Wall + protected tech dashboard</span>
+        </button>
+        <button class="role-card" data-role="agent">
+          <strong>Room Agent</strong>
+          <span>Background monitoring only</span>
+        </button>
+      </div>
+
+      <div id="setupFields" class="setup-fields hidden">
+        <label>
+          Server URL
+          <input id="setupServerUrl" placeholder="https://your-swish-control-server..." />
+        </label>
+        <label id="setupRoomWrap" class="hidden">
+          Room Name
+          <input id="setupRoomName" placeholder="Break Room 1" />
+        </label>
+        <label id="setupKeyWrap" class="hidden">
+          Enrollment Key
+          <input id="setupEnrollmentKey" type="password" placeholder="Agent enrollment key" />
+        </label>
+        <label id="setupObsPasswordWrap" class="hidden">
+          OBS WebSocket Password
+          <input id="setupObsPassword" type="password" placeholder="Optional if OBS WebSocket has no password" />
+        </label>
+
+        <div class="modal-actions">
+          <button id="setupBackBtn" class="ghost">Back</button>
+          <button id="setupSaveBtn" class="primary">Continue</button>
+        </div>
       </div>
     </div>
   </div>
+
+  <div id="loginModal" class="modal hidden">
+    <div class="modal-card login-card">
+      <div class="modal-title">TECH ACCESS</div>
+      <h2>Sign in</h2>
+      <label>
+        Email
+        <input id="loginEmail" type="email" autocomplete="username" />
+      </label>
+      <label>
+        Password
+        <input id="loginPassword" type="password" autocomplete="current-password" />
+      </label>
+      <div id="loginError" class="form-error hidden"></div>
+      <div class="modal-actions">
+        <button id="loginCancelBtn" class="ghost">Cancel</button>
+        <button id="loginSubmitBtn" class="primary">Sign In</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="streamsModal" class="modal hidden">
+    <div class="modal-card streams-card">
+      <div class="modal-head-row">
+        <div>
+          <div class="modal-title">LIVE WALL</div>
+          <h2>Streams</h2>
+        </div>
+        <button id="streamsCloseBtn" class="icon-action">✕</button>
+      </div>
+
+      <div id="streamRows" class="stream-rows"></div>
+
+      <div class="modal-actions sticky-actions">
+        <button id="addStreamBtn" class="ghost">+ Add Stream</button>
+        <div class="toolbar-spacer"></div>
+        <button id="streamsCancelBtn" class="ghost">Cancel</button>
+        <button id="streamsSaveBtn" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <datalist id="roomOptions"></datalist>
 
   <script src="renderer.js"></script>
 </body>
