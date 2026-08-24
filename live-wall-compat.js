@@ -1,20 +1,28 @@
 // Swish Control V2 Live Wall compatibility layer.
 //
-// The public-stream wall is intentionally based on the known-good V1.3
-// lifecycle. V2 is allowed to decorate the wall with health/status data, but
-// background telemetry must never destroy or recreate stream webviews.
+// The Live Wall is treated as a long-lived V1.3-style module. The public
+// stream webviews remain mounted for the life of the app so navigating through
+// Overview / Rooms / Incidents or changing filters cannot wipe site login or
+// in-page state. V2 may decorate tiles with health data, but telemetry never
+// owns the stream lifecycle.
 
 const liveWallCompatState = {
-  visibleSignature: '',
+  configSignature: '',
   exitButton: null
 };
 
-function wallVisibleStreams() {
-  return streams.filter(streamMatchesFilter);
+function wallConfigSignature() {
+  return streams.map((stream) => [
+    stream.id,
+    stream.name,
+    stream.url,
+    stream.platform,
+    stream.roomId
+  ].join('::')).join('|');
 }
 
-function wallSignature(list = wallVisibleStreams()) {
-  return list.map((stream) => stream.id).join('|');
+function wallViews() {
+  return [...els.wallGrid.querySelectorAll('.stream-tile webview')];
 }
 
 function createLegacyStreamWebview(stream) {
@@ -50,8 +58,8 @@ function createLegacyStreamWebview(stream) {
   return view;
 }
 
-// Make the V1.3-compatible webview constructor the one used by both Live Wall
-// and the selected-room preview.
+// Use the proven V1.3 webview constructor for both the wall and the selected
+// room preview.
 createStreamWebview = createLegacyStreamWebview;
 
 function buildLegacyWallTile(stream) {
@@ -60,6 +68,7 @@ function buildLegacyWallTile(stream) {
   tile.className = `stream-tile health-${status.health}${shouldPulse(status) ? ' new-critical' : ''}`;
   tile.dataset.streamId = stream.id;
   tile.dataset.roomId = stream.roomId || '';
+  tile.dataset.platform = platformFor(stream);
 
   const header = document.createElement('div');
   header.className = 'stream-head';
@@ -126,37 +135,60 @@ function buildLegacyWallTile(stream) {
   return tile;
 }
 
-// V1.3 rule: render only when the wall configuration itself changes. Health
-// polling uses updateWallStatusDecorations() and never calls this function
-// unless a Critical filter actually gains/loses a stream.
-renderWall = function renderWallCompat() {
-  if (currentPage !== 'wall') return;
+function tileMatchesActiveFilter(tile) {
+  if (activeFilter === 'All') return true;
 
-  exitCompatFullscreen(false);
-  const visibleStreams = wallVisibleStreams();
-  liveWallCompatState.visibleSignature = wallSignature(visibleStreams);
+  const stream = streams.find((candidate) => candidate.id === tile.dataset.streamId);
+  if (!stream) return false;
 
-  els.wallGrid.innerHTML = '';
-  visibleStreams.forEach((stream) => els.wallGrid.append(buildLegacyWallTile(stream)));
-
-  if (!visibleStreams.length) {
-    els.wallGrid.innerHTML = '<div class="empty-state">No streams match this filter.</div>';
+  if (activeFilter === 'Critical') {
+    const status = statusForRoom(stream.roomId);
+    return status.health === 'critical' || status.health === 'offline';
   }
+
+  return platformFor(stream) === activeFilter;
+}
+
+function applyWallFilterWithoutReload() {
+  let visibleCount = 0;
+
+  els.wallGrid.querySelectorAll('.stream-tile').forEach((tile) => {
+    const visible = tileMatchesActiveFilter(tile);
+    tile.classList.toggle('filter-hidden', !visible);
+    if (visible) visibleCount += 1;
+  });
+
+  let empty = els.wallGrid.querySelector('.wall-filter-empty');
+  if (!visibleCount) {
+    if (!empty) {
+      empty = document.createElement('div');
+      empty.className = 'empty-state wall-filter-empty';
+      empty.textContent = 'No streams match this filter.';
+      els.wallGrid.append(empty);
+    }
+  } else {
+    empty?.remove();
+  }
+}
+
+// Render/recreate webviews only when stream configuration itself changes.
+// Navigating tabs, receiving health updates and changing filters do not rebuild.
+renderWall = function renderWallCompat() {
+  const signature = wallConfigSignature();
+  const alreadyBuilt = els.wallGrid.querySelectorAll('.stream-tile').length > 0;
+
+  if (!alreadyBuilt || signature !== liveWallCompatState.configSignature) {
+    exitCompatFullscreen(false);
+    els.wallGrid.innerHTML = '';
+    streams.forEach((stream) => els.wallGrid.append(buildLegacyWallTile(stream)));
+    liveWallCompatState.configSignature = signature;
+  }
+
+  applyWallFilterWithoutReload();
+  updateWallStatusDecorations();
 };
 
 updateWallStatusDecorations = function updateWallStatusCompat() {
-  if (currentPage !== 'wall') return;
-
-  // Critical is the only filter whose membership can change from telemetry.
-  // Rebuild only on that actual membership transition, not every heartbeat.
-  if (activeFilter === 'Critical') {
-    const nextSignature = wallSignature();
-    if (nextSignature !== liveWallCompatState.visibleSignature) {
-      renderWall();
-      return;
-    }
-  }
-
   els.wallGrid.querySelectorAll('.stream-tile').forEach((tile) => {
     const stream = streams.find((candidate) => candidate.id === tile.dataset.streamId);
     if (!stream) return;
@@ -179,10 +211,12 @@ updateWallStatusDecorations = function updateWallStatusCompat() {
       tile.append(issue);
     }
   });
+
+  // Health can change membership of the Critical filter. Hide/show only.
+  if (activeFilter === 'Critical') applyWallFilterWithoutReload();
 };
 
-// No backend configured means there is simply no status data yet. It must not
-// cause the Live Wall to render again.
+// No backend configured means simply no status data yet. Never touch webviews.
 refreshWallStatuses = async function refreshWallStatusesCompat() {
   if (!appConfig.serverUrl) {
     if (wallStatuses.size) {
@@ -199,7 +233,7 @@ refreshWallStatuses = async function refreshWallStatusesCompat() {
     updateWallStatusDecorations();
     if (currentPage === 'overview' && authToken) renderOverview();
   } catch (_) {
-    // Server/status failure must never interrupt the public streams.
+    // Status server failure must never interrupt public streams.
   }
 };
 
@@ -240,7 +274,7 @@ function exitCompatFullscreen(resume = true) {
   els.wallGrid?.querySelectorAll('.stream-tile').forEach((tile) => tile.classList.remove('fullscreen'));
   liveWallCompatState.exitButton?.remove();
   liveWallCompatState.exitButton = null;
-  if (resume) activeWebviews().forEach(resumeView);
+  if (resume) wallViews().forEach(resumeView);
 }
 
 toggleFullscreen = function toggleFullscreenCompat(streamId) {
@@ -251,7 +285,6 @@ toggleFullscreen = function toggleFullscreenCompat(streamId) {
     return;
   }
 
-  // Always normalize first. This keeps repeated focus changes deterministic.
   exitCompatFullscreen(false);
   fullscreenStreamId = streamId;
   document.body.classList.add('focus-mode');
@@ -268,15 +301,31 @@ toggleFullscreen = function toggleFullscreenCompat(streamId) {
   ensureCompatExitButton();
 };
 
-// Leaving Live Wall must always unwind focus mode before another page takes
-// over. The rest of V2 navigation remains unchanged.
+// Replace V2 page rendering so the wall DOM is never cleared while the app is
+// open. We only hide its page and pause its media while another control page is
+// visible. Returning to Live Wall resumes the same webviews and page sessions.
+renderCurrentPage = function renderCurrentPageCompat() {
+  if (currentPage === 'wall') {
+    renderFilters();
+    renderWall();
+    wallViews().forEach(resumeView);
+    return;
+  }
+
+  wallViews().forEach(pauseView);
+
+  if (currentPage === 'overview') renderOverview();
+  if (currentPage === 'rooms') renderRooms();
+  if (currentPage === 'incidents') renderIncidents();
+};
+
 const v2SwitchPage = switchPage;
 switchPage = function switchPageCompat(page) {
-  if (page !== 'wall') exitCompatFullscreen(true);
+  if (page !== 'wall') exitCompatFullscreen(false);
   return v2SwitchPage(page);
 };
 
-// Escape remains supported, but it is no longer the only escape hatch.
+// Escape remains supported, but it is no longer the only exit route.
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && fullscreenStreamId) {
     event.preventDefault();
