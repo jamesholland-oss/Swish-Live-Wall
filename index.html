@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Swish Control</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="control-extras.css" />
 </head>
 <body>
   <header id="topbar" class="topbar">
@@ -18,6 +19,7 @@
     </nav>
 
     <div class="top-actions">
+      <span id="serverState" class="server-state hidden"><span class="server-state-dot"></span><span id="serverStateText">Server</span></span>
       <button id="signInBtn" class="ghost hidden">Sign In</button>
       <button id="profileBtn" class="profile hidden" title="Control user"></button>
     </div>
@@ -54,15 +56,7 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead>
-              <tr>
-                <th>Started</th>
-                <th>Room</th>
-                <th>Event</th>
-                <th>Status</th>
-                <th>Resolved</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Started</th><th>Room</th><th>Event</th><th>Status</th><th>Resolved</th></tr></thead>
             <tbody id="incidentsBody"></tbody>
           </table>
         </div>
@@ -75,90 +69,42 @@
       <div class="modal-title">SWISH CONTROL</div>
       <h1>Set up this Mac</h1>
       <div class="role-grid">
-        <button class="role-card" data-role="wall">
-          <strong>Live Wall</strong>
-          <span>Public multiview only</span>
-        </button>
-        <button class="role-card" data-role="control">
-          <strong>Control Center</strong>
-          <span>Live Wall + protected tech dashboard</span>
-        </button>
-        <button class="role-card" data-role="agent">
-          <strong>Room Agent</strong>
-          <span>Background monitoring only</span>
-        </button>
+        <button class="role-card" data-role="wall"><strong>Live Wall</strong><span>Public multiview only</span></button>
+        <button class="role-card" data-role="control"><strong>Control Center</strong><span>Live Wall + protected tech dashboard</span></button>
+        <button class="role-card" data-role="agent"><strong>Room Agent</strong><span>Background monitoring only</span></button>
       </div>
 
       <div id="setupFields" class="setup-fields hidden">
-        <label>
-          Server URL
-          <input id="setupServerUrl" placeholder="Optional for Live Wall" />
-        </label>
-        <label id="setupRoomWrap" class="hidden">
-          Room Name
-          <input id="setupRoomName" placeholder="Break Room 1" />
-        </label>
-        <label id="setupKeyWrap" class="hidden">
-          Enrollment Key
-          <input id="setupEnrollmentKey" type="password" placeholder="Agent enrollment key" />
-        </label>
-        <label id="setupObsPasswordWrap" class="hidden">
-          OBS WebSocket Password
-          <input id="setupObsPassword" type="password" placeholder="Optional if OBS WebSocket has no password" />
-        </label>
-
-        <div class="modal-actions">
-          <button id="setupBackBtn" class="ghost">Back</button>
-          <button id="setupSaveBtn" class="primary">Continue</button>
-        </div>
+        <label>Server URL<input id="setupServerUrl" placeholder="Optional for Live Wall" /></label>
+        <label id="setupRoomWrap" class="hidden">Room Name<input id="setupRoomName" placeholder="Break Room 1" /></label>
+        <label id="setupKeyWrap" class="hidden">Enrollment Key<input id="setupEnrollmentKey" type="password" placeholder="Agent enrollment key" /></label>
+        <label id="setupObsPasswordWrap" class="hidden">OBS WebSocket Password<input id="setupObsPassword" type="password" placeholder="Optional if OBS WebSocket has no password" /></label>
+        <div class="modal-actions"><button id="setupBackBtn" class="ghost">Back</button><button id="setupSaveBtn" class="primary">Continue</button></div>
       </div>
     </div>
   </div>
 
   <div id="loginModal" class="modal hidden">
     <div class="modal-card login-card">
-      <div class="modal-title">TECH ACCESS</div>
-      <h2>Sign in</h2>
-      <label>
-        Email
-        <input id="loginEmail" type="email" autocomplete="username" />
-      </label>
-      <label>
-        Password
-        <input id="loginPassword" type="password" autocomplete="current-password" />
-      </label>
+      <div class="modal-title">TECH ACCESS</div><h2>Sign in</h2>
+      <label>Email<input id="loginEmail" type="email" autocomplete="username" /></label>
+      <label>Password<input id="loginPassword" type="password" autocomplete="current-password" /></label>
       <div id="loginError" class="form-error hidden"></div>
-      <div class="modal-actions">
-        <button id="loginCancelBtn" class="ghost">Cancel</button>
-        <button id="loginSubmitBtn" class="primary">Sign In</button>
-      </div>
+      <div class="modal-actions"><button id="loginCancelBtn" class="ghost">Cancel</button><button id="loginSubmitBtn" class="primary">Sign In</button></div>
     </div>
   </div>
 
   <div id="streamsModal" class="modal hidden">
     <div class="modal-card streams-card">
-      <div class="modal-head-row">
-        <div>
-          <div class="modal-title">LIVE WALL</div>
-          <h2>Streams</h2>
-        </div>
-        <button id="streamsCloseBtn" class="icon-action">✕</button>
-      </div>
-
+      <div class="modal-head-row"><div><div class="modal-title">LIVE WALL</div><h2>Streams</h2></div><button id="streamsCloseBtn" class="icon-action">✕</button></div>
       <div id="streamRows" class="stream-rows"></div>
-
-      <div class="modal-actions sticky-actions">
-        <button id="addStreamBtn" class="ghost">+ Add Stream</button>
-        <div class="toolbar-spacer"></div>
-        <button id="streamsCancelBtn" class="ghost">Cancel</button>
-        <button id="streamsSaveBtn" class="primary">Save</button>
-      </div>
+      <div class="modal-actions sticky-actions"><button id="addStreamBtn" class="ghost">+ Add Stream</button><div class="toolbar-spacer"></div><button id="streamsCancelBtn" class="ghost">Cancel</button><button id="streamsSaveBtn" class="primary">Save</button></div>
     </div>
   </div>
 
   <datalist id="roomOptions"></datalist>
-
   <script src="renderer.js"></script>
   <script src="live-wall-compat.js"></script>
+  <script src="control-extras.js"></script>
 </body>
 </html>
