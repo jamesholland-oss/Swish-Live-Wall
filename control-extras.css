@@ -1,0 +1,51 @@
+.stream-tile.filter-hidden { display: none !important; }
+
+.room-admin-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 10px 0 2px;
+}
+
+.danger-action {
+  border: 1px solid rgba(255, 77, 87, .42);
+  background: rgba(54, 11, 15, .75);
+  color: #ffc0c4;
+  border-radius: 8px;
+  padding: 8px 11px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.danger-action:hover { filter: brightness(1.15); }
+
+.monitoring-banner {
+  margin: 8px 0 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #090d13;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.monitoring-banner strong { color: var(--text); }
+
+.server-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.server-state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--offline);
+}
+
+.server-state.connected .server-state-dot { background: var(--green); }
+.server-state.error .server-state-dot { background: var(--red); }
