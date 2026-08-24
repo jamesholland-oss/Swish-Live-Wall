@@ -25,6 +25,7 @@
       "main.js",
       "preload.js",
       "renderer.js",
+      "live-wall-compat.js",
       "index.html",
       "styles.css",
       "agent/**/*",
