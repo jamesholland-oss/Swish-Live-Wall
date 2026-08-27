@@ -5,5 +5,6 @@ contextBridge.exposeInMainWorld('swish', {
   saveStreams: (streams) => ipcRenderer.invoke('streams:save', streams),
   getAppConfig: () => ipcRenderer.invoke('app:get-config'),
   saveAppConfig: (patch) => ipcRenderer.invoke('app:save-config', patch),
+  controlFetch: (request) => ipcRenderer.invoke('control:fetch', request),
   restartApp: () => ipcRenderer.invoke('app:restart')
 });
