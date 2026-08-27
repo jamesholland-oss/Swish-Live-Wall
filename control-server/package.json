@@ -3,9 +3,9 @@
   "version": "2.0.0-pilot",
   "private": true,
   "description": "Central health, incident history, authentication, and alert service for Swish Control",
-  "main": "server.js",
+  "main": "server-v2.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server-v2.js"
   },
   "engines": {
     "node": ">=22"
