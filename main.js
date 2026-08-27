@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, ipcMain, session, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { startAgent } = require('./agent/agent');
@@ -118,6 +118,59 @@ function configureStreamSession() {
   streamSession.setPermissionCheckHandler(() => false);
 }
 
+async function controlFetch(request = {}) {
+  const configuredUrl = normalizeServerUrl(loadAppConfig().serverUrl);
+  if (!configuredUrl) throw new Error('Server URL is not configured.');
+
+  let target;
+  let allowed;
+  try {
+    target = new URL(String(request.url || ''));
+    allowed = new URL(configuredUrl);
+  } catch (_) {
+    throw new Error('Invalid control server URL.');
+  }
+
+  if (!['http:', 'https:'].includes(target.protocol) || target.origin !== allowed.origin) {
+    throw new Error('Control request was blocked.');
+  }
+
+  const method = String(request.method || 'GET').toUpperCase();
+  if (!['GET', 'POST', 'DELETE', 'OPTIONS'].includes(method)) {
+    throw new Error('Unsupported control request method.');
+  }
+
+  const headers = {};
+  for (const [key, value] of Object.entries(request.headers || {})) {
+    headers[String(key)] = String(value);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 7000);
+
+  try {
+    const response = await net.fetch(target.href, {
+      method,
+      headers,
+      body: ['GET', 'HEAD'].includes(method) ? undefined : request.body,
+      signal: controller.signal
+    });
+    const body = await response.text();
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries()),
+      body
+    };
+  } catch (err) {
+    if (err?.name === 'AbortError') throw new Error('Control server request timed out.');
+    throw new Error(err?.message || 'Control server request failed.');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function createWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.show();
@@ -192,6 +245,7 @@ function registerIpc() {
   ipcMain.handle('streams:get', () => loadStreams());
   ipcMain.handle('streams:save', (_event, streams) => saveStreams(streams));
   ipcMain.handle('app:get-config', () => loadAppConfig());
+  ipcMain.handle('control:fetch', (_event, request) => controlFetch(request));
   ipcMain.handle('app:save-config', (_event, patch) => {
     const allowed = {
       role: ['wall', 'control', 'agent'].includes(patch?.role) ? patch.role : undefined,
