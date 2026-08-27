@@ -1,51 +1,55 @@
 // Route Swish Control API requests through Electron's main process.
-// This keeps control-server traffic separate from provider webviews and avoids
-// renderer-origin networking/CORS quirks without changing Live Wall behavior.
+// Do not replace window.fetch: provider/browser traffic must stay untouched.
+// Instead, replace only the app's fetchJson helper used by health/login/rooms/incidents.
 
 (() => {
-  if (!window.swish?.controlFetch) return;
+  if (!window.swish?.controlFetch || typeof fetchJson !== 'function') return;
 
-  const nativeFetch = window.fetch.bind(window);
+  fetchJson = async function fetchJsonThroughMain(path, options = {}, timeoutMs = 5000) {
+    const serverUrl = normalizeServerUrl(appConfig.serverUrl);
+    if (!serverUrl) throw new Error('Server URL is not configured.');
 
-  function headersObject(headers) {
-    if (!headers) return {};
-    if (headers instanceof Headers) return Object.fromEntries(headers.entries());
-    if (Array.isArray(headers)) return Object.fromEntries(headers);
-    return { ...headers };
-  }
+    const headers = { ...(options.headers || {}) };
+    if (options.body && !headers['content-type']) headers['content-type'] = 'application/json';
+    if (options.auth !== false && authToken) headers.authorization = `Bearer ${authToken}`;
 
-  function responseFrom(result, url) {
-    const body = String(result?.body ?? '');
-    return {
-      ok: Boolean(result?.ok),
-      status: Number(result?.status || 0),
-      statusText: String(result?.statusText || ''),
-      headers: new Headers(result?.headers || {}),
-      url,
-      redirected: false,
-      type: 'basic',
-      text: async () => body,
-      json: async () => JSON.parse(body),
-      clone: () => responseFrom(result, url)
-    };
-  }
+    const method = String(options.method || 'GET').toUpperCase();
+    const url = `${serverUrl}${path}`;
 
-  window.fetch = async function swishControlFetch(input, init = {}) {
-    const url = typeof input === 'string' || input instanceof URL
-      ? String(input)
-      : String(input?.url || '');
-
-    if (!/^https?:\/\//i.test(url)) return nativeFetch(input, init);
-
-    const method = String(init.method || input?.method || 'GET').toUpperCase();
-    const headers = headersObject(init.headers || input?.headers);
-    const body = init.body == null ? undefined : String(init.body);
+    let timeout;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(new Error('Control server request timed out.')), timeoutMs);
+    });
 
     try {
-      const result = await window.swish.controlFetch({ url, method, headers, body });
-      return responseFrom(result, url);
+      const result = await Promise.race([
+        window.swish.controlFetch({
+          url,
+          method,
+          headers,
+          body: options.body == null ? undefined : String(options.body)
+        }),
+        timeoutPromise
+      ]);
+
+      let data = {};
+      if (result?.body) {
+        try { data = JSON.parse(result.body); }
+        catch (_) { data = {}; }
+      }
+
+      if (!result?.ok) {
+        const error = new Error(data.error || `Server returned ${result?.status || 0}`);
+        error.status = Number(result?.status || 0);
+        throw error;
+      }
+
+      return data;
     } catch (err) {
-      throw new TypeError(err?.message || 'Failed to fetch');
+      if (err?.status) throw err;
+      throw new Error(`Control connection failed: ${err?.message || 'unknown error'}`);
+    } finally {
+      clearTimeout(timeout);
     }
   };
 })();
