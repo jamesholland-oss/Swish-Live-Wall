@@ -262,7 +262,8 @@ function registerIpc() {
     return config;
   });
   ipcMain.handle('app:restart', () => {
-    app.relaunch();
+    const cleanArgs = process.argv.slice(1).filter((arg) => arg !== '--reset-role');
+    app.relaunch({ args: cleanArgs });
     app.exit(0);
   });
 }
