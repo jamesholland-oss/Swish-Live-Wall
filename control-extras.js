@@ -57,12 +57,97 @@ async function removeRoomFromMonitoring(room) {
   }
 }
 
+function productionState(ok, unknown = false) {
+  if (unknown) return { className: 'unknown', label: 'Unknown' };
+  return ok ? { className: 'ok', label: 'Running' } : { className: 'bad', label: 'Offline' };
+}
+
+function productionCard(title, state, details = []) {
+  return `
+    <div class="production-card ${state.className}">
+      <div class="production-card-head">
+        <span>${escapeHtml(title)}</span>
+        <strong><span class="production-dot"></span>${escapeHtml(state.label)}</strong>
+      </div>
+      ${details.filter(Boolean).map((detail) => `<div class="production-detail">${detail}</div>`).join('')}
+    </div>
+  `;
+}
+
+function renderProductionHealth(room) {
+  const metrics = room.metrics || {};
+  const apps = metrics.productionApps;
+  let section = els.roomDetail.querySelector('.production-health');
+
+  if (!apps) {
+    if (section) section.remove();
+    return;
+  }
+
+  const obsState = productionState(Boolean(apps.obs?.running));
+  const shadeState = productionState(Boolean(apps.shade?.running));
+  const shadeMount = apps.shade?.mounted === null || apps.shade?.mounted === undefined
+    ? { className: 'unknown', label: 'Unknown' }
+    : apps.shade.mounted
+      ? { className: 'ok', label: 'Mounted' }
+      : { className: 'bad', label: 'Unmounted' };
+  const cameraState = productionState(Boolean(apps.cameraControl?.running));
+  const streamDeckState = productionState(Boolean(apps.streamDeck?.running));
+
+  const obsDetails = [
+    `WebSocket: <strong>${metrics.obsWebSocketAuthenticated ? 'Connected' : metrics.obsWebSocketReachable ? 'Needs authentication' : 'Unavailable'}</strong>`,
+    `Stream: <strong>${metrics.streamingActive === true ? 'Live' : metrics.streamingActive === false ? 'Idle' : '—'}</strong>`,
+    apps.obs?.version ? `Version: <strong>${escapeHtml(apps.obs.version)}</strong>` : ''
+  ];
+
+  const shadeDetails = [
+    `Storage: <strong class="production-inline ${shadeMount.className}">${escapeHtml(shadeMount.label)}</strong>`,
+    apps.shade?.mountPath ? `Path: <strong>${escapeHtml(apps.shade.mountPath)}</strong>` : '',
+    apps.shade?.version ? `Version: <strong>${escapeHtml(apps.shade.version)}</strong>` : ''
+  ];
+
+  const cameraDetails = [
+    apps.cameraControl?.app ? `Controller: <strong>${escapeHtml(apps.cameraControl.app)}</strong>` : 'Controller: <strong>Not detected</strong>',
+    apps.cameraControl?.version ? `Version: <strong>${escapeHtml(apps.cameraControl.version)}</strong>` : ''
+  ];
+
+  const streamDeckDetails = [
+    apps.streamDeck?.version ? `Version: <strong>${escapeHtml(apps.streamDeck.version)}</strong>` : ''
+  ];
+
+  const checkedAt = apps.checkedAt ? new Date(apps.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '—';
+  const html = `
+    <div class="production-health-head">
+      <span>PRODUCTION HEALTH</span>
+      <small>Checked ${escapeHtml(checkedAt)}</small>
+    </div>
+    <div class="production-grid">
+      ${productionCard('OBS', obsState, obsDetails)}
+      ${productionCard('SHADE', shadeState, shadeDetails)}
+      ${productionCard('CAMERA CONTROL', cameraState, cameraDetails)}
+      ${productionCard('STREAM DECK', streamDeckState, streamDeckDetails)}
+    </div>
+  `;
+
+  if (!section) {
+    section = document.createElement('section');
+    section.className = 'production-health';
+    const videoWrap = els.roomDetail.querySelector('.room-video-wrap');
+    if (videoWrap) els.roomDetail.insertBefore(section, videoWrap);
+    else els.roomDetail.append(section);
+  }
+  section.innerHTML = html;
+}
+
 const baseRenderRoomDetail = renderRoomDetail;
 renderRoomDetail = function renderRoomDetailWithAdmin(force = false) {
   baseRenderRoomDetail(force);
 
   const room = controlRooms.find((candidate) => candidate.roomId === selectedRoomId);
   if (!room || !authToken) return;
+
+  renderProductionHealth(room);
+
   if (els.roomDetail.querySelector('.room-admin-bar')) return;
 
   const bar = document.createElement('div');
@@ -75,8 +160,10 @@ renderRoomDetail = function renderRoomDetailWithAdmin(force = false) {
 
   bar.append(remove);
 
+  const productionSection = els.roomDetail.querySelector('.production-health');
   const videoWrap = els.roomDetail.querySelector('.room-video-wrap');
-  if (videoWrap) els.roomDetail.insertBefore(bar, videoWrap);
+  if (productionSection) els.roomDetail.insertBefore(bar, productionSection);
+  else if (videoWrap) els.roomDetail.insertBefore(bar, videoWrap);
   else els.roomDetail.append(bar);
 };
 
