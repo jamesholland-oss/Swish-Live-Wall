@@ -50,16 +50,74 @@ function execFilePromise(command, args, timeout = 2500) {
   });
 }
 
-async function obsRunning() {
+async function processSnapshot() {
   if (process.platform === 'win32') {
-    const result = await execFilePromise('tasklist', ['/FI', 'IMAGENAME eq obs64.exe']);
-    return result.ok && result.stdout.toLowerCase().includes('obs64.exe');
+    const result = await execFilePromise('tasklist', ['/FO', 'CSV', '/NH']);
+    return result.stdout.toLowerCase();
+  }
+  const result = await execFilePromise('ps', ['-axo', 'command=']);
+  return result.stdout.toLowerCase();
+}
+
+function processHas(snapshot, names) {
+  return names.some((name) => snapshot.includes(String(name).toLowerCase()));
+}
+
+async function obsRunning(snapshot = null) {
+  const processes = snapshot ?? await processSnapshot();
+  if (process.platform === 'win32') return processHas(processes, ['obs64.exe']);
+  return processHas(processes, ['/obs.app/', 'obs.app/contents/macos/obs', '/contents/macos/obs']);
+}
+
+async function appVersion(paths) {
+  if (process.platform !== 'darwin') return '';
+  for (const appPath of paths) {
+    const plist = path.join(appPath, 'Contents', 'Info.plist');
+    if (!fs.existsSync(plist)) continue;
+    const result = await execFilePromise('/usr/bin/defaults', ['read', plist, 'CFBundleShortVersionString']);
+    if (result.ok && result.stdout.trim()) return result.stdout.trim();
+  }
+  return '';
+}
+
+async function shadeMountStatus() {
+  if (process.platform !== 'darwin') return { mounted: null, mountPath: '' };
+
+  const mountResult = await execFilePromise('/sbin/mount', []);
+  const matchingLine = mountResult.stdout.split('\n').find((line) => /shade/i.test(line));
+  if (matchingLine) {
+    const match = matchingLine.match(/ on (.+?) \(/);
+    return { mounted: true, mountPath: match?.[1] || '' };
   }
 
-  const exact = await execFilePromise('pgrep', ['-x', 'OBS']);
-  if (exact.ok) return true;
-  const bundle = await execFilePromise('pgrep', ['-f', '/OBS.app/']);
-  return bundle.ok;
+  try {
+    const volumes = fs.readdirSync('/Volumes', { withFileTypes: true });
+    const shadeVolume = volumes.find((entry) => /shade/i.test(entry.name));
+    if (shadeVolume) return { mounted: true, mountPath: path.join('/Volumes', shadeVolume.name) };
+  } catch (_) {}
+
+  return { mounted: false, mountPath: '' };
+}
+
+async function productionAppMetrics(snapshot, cachedVersions) {
+  const obs = processHas(snapshot, ['/obs.app/', 'obs.app/contents/macos/obs', '/contents/macos/obs', 'obs64.exe']);
+  const shade = processHas(snapshot, ['/shade.app/', 'shade.app/contents', '\\shade.exe', ' shade ']);
+  const obsbot = processHas(snapshot, ['obsbot center', 'obsbot_center', '/obsbot']);
+  const insta360 = processHas(snapshot, ['insta360 link controller', 'insta360 link', '/insta360']);
+  const streamDeck = processHas(snapshot, ['stream deck', 'streamdeck']);
+  const mount = await shadeMountStatus();
+
+  return {
+    checkedAt: new Date().toISOString(),
+    obs: { running: obs, version: cachedVersions.obs || '' },
+    shade: { running: shade, mounted: mount.mounted, mountPath: mount.mountPath, version: cachedVersions.shade || '' },
+    cameraControl: {
+      running: obsbot || insta360,
+      app: obsbot ? 'OBSBOT Center' : insta360 ? 'Insta360 Link Controller' : '',
+      version: obsbot ? (cachedVersions.obsbot || '') : insta360 ? (cachedVersions.insta360 || '') : ''
+    },
+    streamDeck: { running: streamDeck, version: cachedVersions.streamDeck || '' }
+  };
 }
 
 async function diskMetrics() {
@@ -245,7 +303,22 @@ function startAgent(options = {}) {
   let credentials = readJson(credentialsFile, null);
   let stopped = false;
   let timer = null;
+  let versionCacheAt = 0;
+  let versionCache = { obs: '', shade: '', obsbot: '', insta360: '', streamDeck: '' };
   const sampleCpu = createCpuSampler();
+
+  async function refreshVersions() {
+    if (Date.now() - versionCacheAt < 15 * 60 * 1000) return versionCache;
+    versionCacheAt = Date.now();
+    versionCache = {
+      obs: await appVersion(['/Applications/OBS.app']),
+      shade: await appVersion(['/Applications/Shade.app']),
+      obsbot: await appVersion(['/Applications/OBSBOT Center.app', '/Applications/OBSBOT_Center.app']),
+      insta360: await appVersion(['/Applications/Insta360 Link Controller.app', '/Applications/Insta360 Link Controller 2.app']),
+      streamDeck: await appVersion(['/Applications/Stream Deck.app'])
+    };
+    return versionCache;
+  }
 
   async function enroll() {
     if (credentials?.agentId && credentials?.token) return credentials;
@@ -280,8 +353,11 @@ function startAgent(options = {}) {
   async function collectMetrics() {
     const totalMemory = os.totalmem();
     const usedMemory = totalMemory - os.freemem();
-    const running = await obsRunning();
+    const processes = await processSnapshot();
+    const running = await obsRunning(processes);
     const disk = await diskMetrics();
+    const versions = await refreshVersions();
+    const productionApps = await productionAppMetrics(processes, versions);
 
     let obs = {
       obsWebSocketReachable: false,
@@ -294,6 +370,8 @@ function startAgent(options = {}) {
       obs = await queryObsWebSocket({ host: obsHost, port: obsPort, password: obsPassword });
     }
 
+    productionApps.obs.running = running;
+
     return {
       cpuPercent: sampleCpu(),
       memoryPercent: Math.round((usedMemory / totalMemory) * 1000) / 10,
@@ -302,6 +380,7 @@ function startAgent(options = {}) {
       uptimeSeconds: Math.round(os.uptime()),
       localIp: primaryLocalIp(),
       obsRunning: running,
+      productionApps,
       ...obs,
       ...disk
     };
@@ -324,9 +403,9 @@ function startAgent(options = {}) {
           roomName,
           hostname: os.hostname(),
           platform: `${process.platform}-${process.arch}`,
-          appVersion: '2.0.0-pilot',
+          appVersion: '2.0.0-beta.3',
           metrics: await collectMetrics(),
-          capabilities: []
+          capabilities: ['production-app-health', 'shade-mount-health']
         })
       });
 
