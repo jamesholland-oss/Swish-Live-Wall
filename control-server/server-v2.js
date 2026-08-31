@@ -172,7 +172,8 @@ function healthFor(agent, at = Date.now()) {
   if (metrics.obsRunning && metrics.obsWebSocketReachable === false) return { health: 'warning', issue: 'OBS WebSocket unavailable' };
   if (metrics.obsRunning && metrics.obsWebSocketReachable && metrics.obsWebSocketAuthenticated === false) return { health: 'warning', issue: 'OBS WebSocket not authenticated' };
   if (apps.shade?.running === true && apps.shade?.mounted === false) return { health: 'warning', issue: 'Shade storage unmounted' };
-  if (Number(metrics.memoryPercent) >= 90) return { health: 'warning', issue: `RAM ${Math.round(metrics.memoryPercent)}%` };
+  const memoryPercent = metrics.memoryPressurePercent != null ? Number(metrics.memoryPressurePercent) : Number(metrics.memoryPercent);
+  if (Number.isFinite(memoryPercent) && memoryPercent >= 90) return { health: 'warning', issue: `RAM ${Math.round(memoryPercent)}%` };
   if (Number(metrics.cpuPercent) >= 90) return { health: 'warning', issue: `CPU ${Math.round(metrics.cpuPercent)}%` };
   if (metrics.diskFreePercent != null && Number(metrics.diskFreePercent) <= 10) return { health: 'warning', issue: `Disk ${Math.round(metrics.diskFreePercent)}% free` };
   return { health: 'healthy', issue: '' };
@@ -189,11 +190,12 @@ function issueKey(issue) {
 async function sendSlack(text) {
   if (!SLACK_WEBHOOK_URL) return;
   try {
-    await fetch(SLACK_WEBHOOK_URL, {
+    const response = await fetch(SLACK_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text })
     });
+    if (!response.ok) console.error(`Slack alert failed: HTTP ${response.status}`);
   } catch (err) {
     console.error('Slack alert failed:', err.message);
   }
@@ -202,7 +204,12 @@ async function sendSlack(text) {
 function slackHealthMessage(agent, health, issue) {
   const m = agent.metrics || {};
   const icon = health === 'warning' ? '⚠️' : '🔴';
-  return `${icon} SWISH CONTROL — ${health.toUpperCase()}\nRoom: ${agent.roomName}\nIssue: ${issue}\nCPU: ${m.cpuPercent ?? '—'}% | RAM: ${m.memoryPercent ?? '—'}%\nDisk Free: ${m.diskFreePercent ?? '—'}%\nHost: ${agent.hostname || '—'} | IP: ${m.localIp || '—'}\nAction: Please check the room.`;
+  const memoryLabel = m.memoryMetric === 'pressure' ? 'Memory Pressure' : 'RAM';
+  return `${icon} SWISH CONTROL — ${health.toUpperCase()}\nRoom: ${agent.roomName}\nIssue: ${issue}\nCPU: ${m.cpuPercent ?? '—'}% | ${memoryLabel}: ${m.memoryPercent ?? '—'}%\nDisk Free: ${m.diskFreePercent ?? '—'}%\nHost: ${agent.hostname || '—'} | IP: ${m.localIp || '—'}\nAction: Please check the room.`;
+}
+
+function slackResolvedMessage(agent, resolvedIssue, replacementIssue = '') {
+  return `✅ SWISH CONTROL — RESOLVED\nRoom: ${agent.roomName}\nResolved: ${resolvedIssue}\n${replacementIssue ? `Next issue: ${replacementIssue}` : 'Status: Healthy'}`;
 }
 
 function activeHealthIncident(agentId) {
@@ -238,7 +245,7 @@ function reconcile(agent) {
       existing.resolvedAt = at;
       existing.status = 'resolved';
       existing.resolution = 'Room returned to healthy state';
-      sendSlack(`✅ SWISH CONTROL — RESOLVED\nRoom: ${agent.roomName}\nResolved: ${existing.message}\nStatus: Healthy`);
+      sendSlack(slackResolvedMessage(agent, existing.message));
     }
   } else {
     const sameCondition = existing && existing.health === next.health && issueKey(existing.message) === issueKey(next.issue);
@@ -248,9 +255,11 @@ function reconcile(agent) {
       existing.lastUpdatedAt = at;
     } else {
       if (existing) {
+        const resolvedIssue = existing.message;
         existing.resolvedAt = at;
         existing.status = 'resolved';
         existing.resolution = `Replaced by ${next.health}: ${next.issue}`;
+        sendSlack(slackResolvedMessage(agent, resolvedIssue, next.issue));
       }
 
       state.incidents.unshift({
@@ -277,6 +286,8 @@ function maybeSample(agent) {
     at: nowIso(),
     cpuPercent: agent.metrics?.cpuPercent ?? null,
     memoryPercent: agent.metrics?.memoryPercent ?? null,
+    memoryPressurePercent: agent.metrics?.memoryPressurePercent ?? null,
+    memoryMetric: agent.metrics?.memoryMetric ?? null,
     diskFreePercent: agent.metrics?.diskFreePercent ?? null,
     obsRunning: agent.metrics?.obsRunning ?? null,
     obsWebSocketReachable: agent.metrics?.obsWebSocketReachable ?? null,
