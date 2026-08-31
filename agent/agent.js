@@ -145,6 +145,38 @@ async function diskMetrics() {
   };
 }
 
+async function memoryMetrics() {
+  const totalMemory = os.totalmem();
+  const rawUsedMemory = totalMemory - os.freemem();
+  const rawPercent = Math.round((rawUsedMemory / totalMemory) * 1000) / 10;
+  const base = {
+    memoryPercent: rawPercent,
+    memoryPressurePercent: null,
+    memoryRawUsedPercent: rawPercent,
+    memoryMetric: 'used',
+    memoryUsedGb: Math.round((rawUsedMemory / 1024 ** 3) * 10) / 10,
+    memoryTotalGb: Math.round((totalMemory / 1024 ** 3) * 10) / 10
+  };
+
+  if (process.platform !== 'darwin') return base;
+
+  const result = await execFilePromise('/usr/bin/memory_pressure', ['-Q'], 3000);
+  const output = `${result.stdout}\n${result.stderr}`;
+  const match = output.match(/System-wide memory free percentage:\s*([0-9.]+)%/i);
+  if (!match) return base;
+
+  const freePercent = Number(match[1]);
+  if (!Number.isFinite(freePercent)) return base;
+
+  const pressurePercent = Math.max(0, Math.min(100, Math.round((100 - freePercent) * 10) / 10));
+  return {
+    ...base,
+    memoryPercent: pressurePercent,
+    memoryPressurePercent: pressurePercent,
+    memoryMetric: 'pressure'
+  };
+}
+
 function tcpReachable(host, port, timeout = 1200) {
   return new Promise((resolve) => {
     const socket = net.createConnection({ host, port: Number(port) });
@@ -351,11 +383,10 @@ function startAgent(options = {}) {
   }
 
   async function collectMetrics() {
-    const totalMemory = os.totalmem();
-    const usedMemory = totalMemory - os.freemem();
     const processes = await processSnapshot();
     const running = await obsRunning(processes);
     const disk = await diskMetrics();
+    const memory = await memoryMetrics();
     const versions = await refreshVersions();
     const productionApps = await productionAppMetrics(processes, versions);
 
@@ -374,9 +405,7 @@ function startAgent(options = {}) {
 
     return {
       cpuPercent: sampleCpu(),
-      memoryPercent: Math.round((usedMemory / totalMemory) * 1000) / 10,
-      memoryUsedGb: Math.round((usedMemory / 1024 ** 3) * 10) / 10,
-      memoryTotalGb: Math.round((totalMemory / 1024 ** 3) * 10) / 10,
+      ...memory,
       uptimeSeconds: Math.round(os.uptime()),
       localIp: primaryLocalIp(),
       obsRunning: running,
@@ -403,9 +432,9 @@ function startAgent(options = {}) {
           roomName,
           hostname: os.hostname(),
           platform: `${process.platform}-${process.arch}`,
-          appVersion: '2.0.0-beta.3',
+          appVersion: '2.0.0-beta.6',
           metrics: await collectMetrics(),
-          capabilities: ['production-app-health', 'shade-mount-health']
+          capabilities: ['production-app-health', 'shade-mount-health', 'mac-memory-pressure']
         })
       });
 
