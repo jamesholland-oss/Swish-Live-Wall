@@ -137,6 +137,81 @@
 .production-inline.bad { color: var(--red); }
 .production-inline.unknown { color: var(--muted); }
 
+.agent-ui-mode .topbar,
+.agent-ui-mode .app-root,
+.agent-ui-mode .modal {
+  display: none !important;
+}
+
+.agent-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #07090d;
+}
+
+.agent-card {
+  width: min(100%, 430px);
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #090d13;
+}
+
+.agent-kicker {
+  font-family: 'Michroma', sans-serif;
+  font-size: 10px;
+  letter-spacing: .09em;
+  color: var(--muted);
+}
+
+.agent-card h1 {
+  margin: 10px 0 18px;
+  font-family: 'Michroma', sans-serif;
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.agent-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.agent-live-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.agent-meta {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.agent-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.agent-actions button {
+  flex: 1;
+  min-height: 40px;
+}
+
+.agent-note {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 9px;
+  text-align: center;
+}
+
 @media (max-width: 1200px) {
   .production-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
