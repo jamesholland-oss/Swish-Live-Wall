@@ -432,7 +432,7 @@ function startAgent(options = {}) {
           roomName,
           hostname: os.hostname(),
           platform: `${process.platform}-${process.arch}`,
-          appVersion: '2.0.0-beta.6',
+          appVersion: '2.0.0-beta.7',
           metrics: await collectMetrics(),
           capabilities: ['production-app-health', 'shade-mount-health', 'mac-memory-pressure']
         })
