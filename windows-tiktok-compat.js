@@ -1,9 +1,10 @@
 // Windows-only TikTok compatibility.
 // TikTok's iPhone/Safari presentation can render incorrectly inside Electron on Windows.
-// Keep Mac behavior unchanged, but identify TikTok as Android Chrome on Windows so it
-// receives a Chromium-compatible mobile layout inside the existing 9:16 wall frame.
+// Keep Mac behavior unchanged, but identify TikTok as standard Android Chrome on Windows.
+// Avoid the Android WebView markers ("wv" / Version/4.0) because TikTok can route auth
+// through a restricted embedded-webview flow that breaks or degrades login.
 
-const WINDOWS_TIKTOK_UA = 'Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro Build/AP4A.250105.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/131.0.0.0 Mobile Safari/537.36';
+const WINDOWS_TIKTOK_UA = 'Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro Build/AP4A.250105.002) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
 const swishDefaultUserAgentFor = userAgentFor;
 
 userAgentFor = function userAgentForWindowsTikTok(url) {
