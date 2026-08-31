@@ -1,5 +1,20 @@
 // Monitoring/admin controls layered on top of the stable Swish Control UI.
 
+// TikTok behaves poorly when Electron on Windows presents the iPhone Safari
+// user agent that is proven on macOS. Keep the Mac behavior unchanged, but
+// present TikTok with a normal Windows Chrome identity on Windows builds.
+const WINDOWS_TIKTOK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
+const baseUserAgentForPlatform = userAgentFor;
+userAgentFor = function userAgentForPlatform(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    const isTikTok = host === 'tiktok.com' || host.endsWith('.tiktok.com');
+    const isWindows = /Win/i.test(navigator.platform || '') || /Windows/i.test(navigator.userAgent || '');
+    if (isTikTok && isWindows) return WINDOWS_TIKTOK_UA;
+  } catch (_) {}
+  return baseUserAgentForPlatform(url);
+};
+
 const serverStateEl = document.getElementById('serverState');
 const serverStateTextEl = document.getElementById('serverStateText');
 
