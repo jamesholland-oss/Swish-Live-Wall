@@ -178,11 +178,15 @@ function createWindow() {
     return mainWindow;
   }
 
+  const isAgent = loadAppConfig().role === 'agent';
+  if (isAgent && process.platform === 'darwin' && app.dock) app.dock.show();
+
   mainWindow = new BrowserWindow({
-    width: 1920,
-    height: 1080,
-    minWidth: 1100,
-    minHeight: 650,
+    width: isAgent ? 560 : 1920,
+    height: isAgent ? 390 : 1080,
+    minWidth: isAgent ? 460 : 1100,
+    minHeight: isAgent ? 320 : 650,
+    resizable: true,
     backgroundColor: '#07090d',
     title: 'Swish Control',
     autoHideMenuBar: true,
@@ -208,7 +212,10 @@ function createWindow() {
   });
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    if (loadAppConfig().role === 'agent' && process.platform === 'darwin' && app.dock) app.dock.hide();
+  });
   mainWindow.loadFile('index.html');
   return mainWindow;
 }
@@ -248,7 +255,7 @@ function registerIpc() {
   ipcMain.handle('control:fetch', (_event, request) => controlFetch(request));
   ipcMain.handle('app:save-config', (_event, patch) => {
     const allowed = {
-      role: ['wall', 'control', 'agent'].includes(patch?.role) ? patch.role : undefined,
+      role: ['wall', 'control', 'agent'].includes(patch?.role) ? patch.role : (patch?.role === '' ? '' : undefined),
       serverUrl: patch?.serverUrl,
       roomName: patch?.roomName,
       agentEnrollmentKey: patch?.agentEnrollmentKey,
@@ -273,8 +280,6 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    const config = loadAppConfig();
-    if (config.role === 'agent') return;
     createWindow();
   });
 
@@ -294,8 +299,7 @@ if (!gotLock) {
     else createWindow();
 
     app.on('activate', () => {
-      const latest = loadAppConfig();
-      if (latest.role !== 'agent' && BrowserWindow.getAllWindows().length === 0) createWindow();
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
 }
