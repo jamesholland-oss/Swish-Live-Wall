@@ -157,34 +157,89 @@ function uniqueRoomId(roomName) {
   return `${base}-${crypto.randomBytes(2).toString('hex')}`;
 }
 
-function healthFor(agent, at = Date.now()) {
-  const metrics = agent.metrics || {};
-  const apps = metrics.productionApps || {};
-  const age = at - Number(agent.lastSeen || 0);
-
-  if (!agent.lastSeen) {
-    const enrolled = agent.firstSeen ? at - Date.parse(agent.firstSeen) : OFFLINE_AFTER_MS + 1;
-    if (enrolled <= OFFLINE_AFTER_MS) return { health: 'unmonitored', issue: 'Awaiting first heartbeat' };
-    return { health: 'offline', issue: 'Agent offline' };
-  }
-  if (age > OFFLINE_AFTER_MS) return { health: 'offline', issue: 'Agent offline' };
-  if (metrics.obsRunning === false) return { health: 'critical', issue: 'OBS offline' };
-  if (metrics.obsRunning && metrics.obsWebSocketReachable === false) return { health: 'warning', issue: 'OBS WebSocket unavailable' };
-  if (metrics.obsRunning && metrics.obsWebSocketReachable && metrics.obsWebSocketAuthenticated === false) return { health: 'warning', issue: 'OBS WebSocket not authenticated' };
-  if (apps.shade?.running === true && apps.shade?.mounted === false) return { health: 'warning', issue: 'Shade storage unmounted' };
-  const memoryPercent = metrics.memoryPressurePercent != null ? Number(metrics.memoryPressurePercent) : Number(metrics.memoryPercent);
-  if (Number.isFinite(memoryPercent) && memoryPercent >= 90) return { health: 'warning', issue: `RAM ${Math.round(memoryPercent)}%` };
-  if (Number(metrics.cpuPercent) >= 90) return { health: 'warning', issue: `CPU ${Math.round(metrics.cpuPercent)}%` };
-  if (metrics.diskFreePercent != null && Number(metrics.diskFreePercent) <= 10) return { health: 'warning', issue: `Disk ${Math.round(metrics.diskFreePercent)}% free` };
-  return { health: 'healthy', issue: '' };
-}
-
 function issueKey(issue) {
   const value = String(issue || '');
   if (/^RAM \d+%$/.test(value)) return 'ram-high';
   if (/^CPU \d+%$/.test(value)) return 'cpu-high';
   if (/^Disk \d+% free$/.test(value)) return 'disk-low';
+  if (value === 'Agent offline') return 'agent-offline';
+  if (value === 'OBS offline') return 'obs-offline';
+  if (value === 'OBS WebSocket unavailable') return 'obs-websocket-unavailable';
+  if (value === 'OBS WebSocket not authenticated') return 'obs-websocket-auth';
+  if (value === 'Shade storage unmounted') return 'shade-unmounted';
   return value.toLowerCase();
+}
+
+function activeHealthIncidents(agentId) {
+  return state.incidents.filter((incident) => incident.agentId === agentId && incident.kind === 'health' && !incident.resolvedAt);
+}
+
+function incidentKey(incident) {
+  return incident.conditionKey || issueKey(incident.message);
+}
+
+function currentConditions(agent, at = Date.now()) {
+  const metrics = agent.metrics || {};
+  const apps = metrics.productionApps || {};
+  const existingKeys = new Set(activeHealthIncidents(agent.agentId).map(incidentKey));
+  const age = at - Number(agent.lastSeen || 0);
+
+  if (!agent.lastSeen) {
+    const enrolled = agent.firstSeen ? at - Date.parse(agent.firstSeen) : OFFLINE_AFTER_MS + 1;
+    if (enrolled <= OFFLINE_AFTER_MS) return [];
+    return [{ key: 'agent-offline', health: 'offline', severity: 'critical', message: 'Agent offline' }];
+  }
+  if (age > OFFLINE_AFTER_MS) {
+    return [{ key: 'agent-offline', health: 'offline', severity: 'critical', message: 'Agent offline' }];
+  }
+
+  const conditions = [];
+
+  if (metrics.obsRunning === false) {
+    conditions.push({ key: 'obs-offline', health: 'critical', severity: 'critical', message: 'OBS offline' });
+  } else if (metrics.obsRunning) {
+    if (metrics.obsWebSocketReachable === false) {
+      conditions.push({ key: 'obs-websocket-unavailable', health: 'warning', severity: 'warning', message: 'OBS WebSocket unavailable' });
+    } else if (metrics.obsWebSocketReachable && metrics.obsWebSocketAuthenticated === false) {
+      conditions.push({ key: 'obs-websocket-auth', health: 'warning', severity: 'warning', message: 'OBS WebSocket not authenticated' });
+    }
+  }
+
+  if (apps.shade?.running === true && apps.shade?.mounted === false) {
+    conditions.push({ key: 'shade-unmounted', health: 'warning', severity: 'warning', message: 'Shade storage unmounted' });
+  }
+
+  const memoryPercent = metrics.memoryPressurePercent != null ? Number(metrics.memoryPressurePercent) : Number(metrics.memoryPercent);
+  const memoryActive = existingKeys.has('ram-high');
+  if (Number.isFinite(memoryPercent) && (memoryPercent >= 90 || (memoryActive && memoryPercent >= 85))) {
+    conditions.push({ key: 'ram-high', health: 'warning', severity: 'warning', message: `RAM ${Math.round(memoryPercent)}%` });
+  }
+
+  const cpuPercent = Number(metrics.cpuPercent);
+  const cpuActive = existingKeys.has('cpu-high');
+  if (Number.isFinite(cpuPercent) && (cpuPercent >= 90 || (cpuActive && cpuPercent >= 85))) {
+    conditions.push({ key: 'cpu-high', health: 'warning', severity: 'warning', message: `CPU ${Math.round(cpuPercent)}%` });
+  }
+
+  const diskFreePercent = Number(metrics.diskFreePercent);
+  const diskActive = existingKeys.has('disk-low');
+  if (metrics.diskFreePercent != null && Number.isFinite(diskFreePercent) && (diskFreePercent <= 10 || (diskActive && diskFreePercent <= 15))) {
+    conditions.push({ key: 'disk-low', health: 'warning', severity: 'warning', message: `Disk ${Math.round(diskFreePercent)}% free` });
+  }
+
+  return conditions;
+}
+
+function healthFor(agent, at = Date.now()) {
+  if (!agent.lastSeen) {
+    const enrolled = agent.firstSeen ? at - Date.parse(agent.firstSeen) : OFFLINE_AFTER_MS + 1;
+    if (enrolled <= OFFLINE_AFTER_MS) return { health: 'unmonitored', issue: 'Awaiting first heartbeat' };
+  }
+
+  const conditions = currentConditions(agent, at);
+  if (!conditions.length) return { health: 'healthy', issue: '' };
+  const primary = conditions.find((condition) => ['critical', 'offline'].includes(condition.health)) || conditions[0];
+  return { health: primary.health, issue: primary.message };
 }
 
 async function sendSlack(text) {
@@ -201,19 +256,13 @@ async function sendSlack(text) {
   }
 }
 
-function slackHealthMessage(agent, health, issue) {
+function slackHealthMessage(agent, issue) {
   const m = agent.metrics || {};
-  const icon = health === 'warning' ? '⚠️' : '🔴';
-  const memoryLabel = m.memoryMetric === 'pressure' ? 'Memory Pressure' : 'RAM';
-  return `${icon} SWISH CONTROL — ${health.toUpperCase()}\nRoom: ${agent.roomName}\nIssue: ${issue}\nCPU: ${m.cpuPercent ?? '—'}% | ${memoryLabel}: ${m.memoryPercent ?? '—'}%\nDisk Free: ${m.diskFreePercent ?? '—'}%\nHost: ${agent.hostname || '—'} | IP: ${m.localIp || '—'}\nAction: Please check the room.`;
+  return `Room: ${agent.roomName}\nIssue: ${issue}\nCPU: ${m.cpuPercent ?? '—'}% | RAM: ${m.memoryPercent ?? '—'}%\nDisk Free: ${m.diskFreePercent ?? '—'}%\nHost: ${agent.hostname || '—'} | IP: ${m.localIp || '—'}\nAction: Please check the room.`;
 }
 
-function slackResolvedMessage(agent, resolvedIssue, replacementIssue = '') {
-  return `✅ SWISH CONTROL — RESOLVED\nRoom: ${agent.roomName}\nResolved: ${resolvedIssue}\n${replacementIssue ? `Next issue: ${replacementIssue}` : 'Status: Healthy'}`;
-}
-
-function activeHealthIncident(agentId) {
-  return state.incidents.find((incident) => incident.agentId === agentId && incident.kind === 'health' && !incident.resolvedAt);
+function slackResolvedMessage(agent, incident) {
+  return `Room: ${agent.roomName}\nResolved: ${incident.message}\nStatus: Issue cleared.`;
 }
 
 function addInfoEvent(agent, message, extra = {}) {
@@ -234,47 +283,61 @@ function addInfoEvent(agent, message, extra = {}) {
 }
 
 function reconcile(agent) {
-  const next = healthFor(agent);
-  if (agent.health === next.health && agent.issue === next.issue) return false;
-
   const at = nowIso();
-  const existing = activeHealthIncident(agent.agentId);
+  const current = currentConditions(agent);
+  const currentByKey = new Map(current.map((condition) => [condition.key, condition]));
+  const existing = activeHealthIncidents(agent.agentId);
+  const existingByKey = new Map(existing.map((incident) => [incidentKey(incident), incident]));
+  let changed = false;
 
-  if (next.health === 'healthy' || next.health === 'unmonitored') {
-    if (existing) {
-      existing.resolvedAt = at;
-      existing.status = 'resolved';
-      existing.resolution = 'Room returned to healthy state';
-      sendSlack(slackResolvedMessage(agent, existing.message));
-    }
-  } else {
-    const sameCondition = existing && existing.health === next.health && issueKey(existing.message) === issueKey(next.issue);
-
-    if (sameCondition) {
-      existing.message = next.issue;
-      existing.lastUpdatedAt = at;
-    } else {
-      if (existing) {
-        const resolvedIssue = existing.message;
-        existing.resolvedAt = at;
-        existing.status = 'resolved';
-        existing.resolution = `Replaced by ${next.health}: ${next.issue}`;
-        sendSlack(slackResolvedMessage(agent, resolvedIssue, next.issue));
-      }
-
-      state.incidents.unshift({
-        id: crypto.randomUUID(), agentId: agent.agentId, roomId: agent.roomId, roomName: agent.roomName,
-        kind: 'health', health: next.health, severity: next.health === 'warning' ? 'warning' : 'critical',
-        message: next.issue, openedAt: at, resolvedAt: null, status: 'open'
-      });
-      sendSlack(slackHealthMessage(agent, next.health, next.issue));
-    }
+  for (const incident of existing) {
+    const key = incidentKey(incident);
+    if (currentByKey.has(key)) continue;
+    incident.resolvedAt = at;
+    incident.status = 'resolved';
+    incident.resolution = 'Condition cleared';
+    sendSlack(slackResolvedMessage(agent, incident));
+    changed = true;
   }
 
-  agent.health = next.health;
-  agent.issue = next.issue;
-  agent.healthChangedAt = at;
-  return true;
+  for (const condition of current) {
+    const incident = existingByKey.get(condition.key);
+    if (incident && !incident.resolvedAt) {
+      if (incident.message !== condition.message) {
+        incident.message = condition.message;
+        incident.lastUpdatedAt = at;
+        changed = true;
+      }
+      continue;
+    }
+
+    state.incidents.unshift({
+      id: crypto.randomUUID(),
+      agentId: agent.agentId,
+      roomId: agent.roomId,
+      roomName: agent.roomName,
+      kind: 'health',
+      conditionKey: condition.key,
+      health: condition.health,
+      severity: condition.severity,
+      message: condition.message,
+      openedAt: at,
+      resolvedAt: null,
+      status: 'open'
+    });
+    sendSlack(slackHealthMessage(agent, condition.message));
+    changed = true;
+  }
+
+  const next = healthFor(agent);
+  if (agent.health !== next.health || agent.issue !== next.issue) {
+    agent.health = next.health;
+    agent.issue = next.issue;
+    agent.healthChangedAt = at;
+    changed = true;
+  }
+
+  return changed;
 }
 
 function maybeSample(agent) {
@@ -418,8 +481,7 @@ async function removeAgent(req, res, agentId) {
 
   const body = await readJson(req).catch(() => ({}));
   const at = nowIso();
-  const active = activeHealthIncident(agentId);
-  if (active) {
+  for (const active of activeHealthIncidents(agentId)) {
     active.resolvedAt = at;
     active.status = 'resolved';
     active.resolution = 'Monitoring device removed';
