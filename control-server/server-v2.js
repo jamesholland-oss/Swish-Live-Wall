@@ -256,13 +256,18 @@ async function sendSlack(text) {
   }
 }
 
-function slackHealthMessage(agent, issue) {
-  const m = agent.metrics || {};
-  return `Room: ${agent.roomName}\nIssue: ${issue}\nCPU: ${m.cpuPercent ?? '—'}% | RAM: ${m.memoryPercent ?? '—'}%\nDisk Free: ${m.diskFreePercent ?? '—'}%\nHost: ${agent.hostname || '—'} | IP: ${m.localIp || '—'}\nAction: Please check the room.`;
+function actionForCondition(key) {
+  if (key === 'ram-high') return 'Please check the RAM.';
+  if (key === 'cpu-high') return 'Please check the CPU.';
+  if (key === 'disk-low') return 'Please check the storage.';
+  if (key === 'shade-unmounted') return 'Please check Shade storage.';
+  if (key.startsWith('obs-')) return 'Please check OBS.';
+  if (key === 'agent-offline') return 'Please check the agent.';
+  return 'Please check the room.';
 }
 
-function slackResolvedMessage(agent, incident) {
-  return `Room: ${agent.roomName}\nResolved: ${incident.message}\nStatus: Issue cleared.`;
+function slackHealthMessage(agent, condition) {
+  return `Room: ${agent.roomName}\nIssue: ${condition.message}\nAction: ${actionForCondition(condition.key)}`;
 }
 
 function addInfoEvent(agent, message, extra = {}) {
@@ -288,15 +293,21 @@ function reconcile(agent) {
   const currentByKey = new Map(current.map((condition) => [condition.key, condition]));
   const existing = activeHealthIncidents(agent.agentId);
   const existingByKey = new Map(existing.map((incident) => [incidentKey(incident), incident]));
+  const agentOffline = currentByKey.has('agent-offline');
   let changed = false;
 
   for (const incident of existing) {
     const key = incidentKey(incident);
     if (currentByKey.has(key)) continue;
+
+    // When the agent briefly drops offline, keep its other active incidents open.
+    // This prevents an unresolved RAM/OBS/etc. issue from being marked resolved
+    // and then re-alerted when the heartbeat returns.
+    if (agentOffline && key !== 'agent-offline') continue;
+
     incident.resolvedAt = at;
     incident.status = 'resolved';
     incident.resolution = 'Condition cleared';
-    sendSlack(slackResolvedMessage(agent, incident));
     changed = true;
   }
 
@@ -325,7 +336,7 @@ function reconcile(agent) {
       resolvedAt: null,
       status: 'open'
     });
-    sendSlack(slackHealthMessage(agent, condition.message));
+    sendSlack(slackHealthMessage(agent, condition));
     changed = true;
   }
 
