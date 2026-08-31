@@ -50,6 +50,23 @@
 .server-state.connected .server-state-dot { background: var(--green); }
 .server-state.error .server-state-dot { background: var(--red); }
 
+/* Room health: green = healthy, yellow = warning, red = critical/offline. */
+.status-dot.offline {
+  background: var(--red) !important;
+  box-shadow: 0 0 11px rgba(255, 77, 87, .42) !important;
+}
+
+.stream-tile.health-offline,
+.overview-room.health-offline {
+  border-color: rgba(255, 77, 87, .8) !important;
+}
+
+.wall-issue.offline {
+  background: rgba(54, 11, 15, .92) !important;
+  border-color: rgba(255, 77, 87, .42) !important;
+  color: #ffc0c4 !important;
+}
+
 .production-health {
   margin: 14px 0 4px;
   padding: 12px;
