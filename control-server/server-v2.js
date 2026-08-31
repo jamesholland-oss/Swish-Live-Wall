@@ -270,6 +270,10 @@ function slackHealthMessage(agent, condition) {
   return `Room: ${agent.roomName}\nIssue: ${condition.message}\nAction: ${actionForCondition(condition.key)}`;
 }
 
+function slackResolvedMessage(agent, incident) {
+  return `Room: ${agent.roomName}\nResolved: ${incident.message}`;
+}
+
 function addInfoEvent(agent, message, extra = {}) {
   const at = nowIso();
   state.incidents.unshift({
@@ -300,14 +304,15 @@ function reconcile(agent) {
     const key = incidentKey(incident);
     if (currentByKey.has(key)) continue;
 
-    // When the agent briefly drops offline, keep its other active incidents open.
-    // This prevents an unresolved RAM/OBS/etc. issue from being marked resolved
-    // and then re-alerted when the heartbeat returns.
+    // If the agent itself is offline we cannot verify whether its other
+    // conditions actually cleared, so keep those incidents open and do not
+    // send false resolution messages.
     if (agentOffline && key !== 'agent-offline') continue;
 
     incident.resolvedAt = at;
     incident.status = 'resolved';
     incident.resolution = 'Condition cleared';
+    sendSlack(slackResolvedMessage(agent, incident));
     changed = true;
   }
 
