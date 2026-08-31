@@ -159,6 +159,7 @@ function uniqueRoomId(roomName) {
 
 function healthFor(agent, at = Date.now()) {
   const metrics = agent.metrics || {};
+  const apps = metrics.productionApps || {};
   const age = at - Number(agent.lastSeen || 0);
 
   if (!agent.lastSeen) {
@@ -170,10 +171,19 @@ function healthFor(agent, at = Date.now()) {
   if (metrics.obsRunning === false) return { health: 'critical', issue: 'OBS offline' };
   if (metrics.obsRunning && metrics.obsWebSocketReachable === false) return { health: 'warning', issue: 'OBS WebSocket unavailable' };
   if (metrics.obsRunning && metrics.obsWebSocketReachable && metrics.obsWebSocketAuthenticated === false) return { health: 'warning', issue: 'OBS WebSocket not authenticated' };
+  if (apps.shade?.running === true && apps.shade?.mounted === false) return { health: 'warning', issue: 'Shade storage unmounted' };
   if (Number(metrics.memoryPercent) >= 90) return { health: 'warning', issue: `RAM ${Math.round(metrics.memoryPercent)}%` };
   if (Number(metrics.cpuPercent) >= 90) return { health: 'warning', issue: `CPU ${Math.round(metrics.cpuPercent)}%` };
   if (metrics.diskFreePercent != null && Number(metrics.diskFreePercent) <= 10) return { health: 'warning', issue: `Disk ${Math.round(metrics.diskFreePercent)}% free` };
   return { health: 'healthy', issue: '' };
+}
+
+function issueKey(issue) {
+  const value = String(issue || '');
+  if (/^RAM \d+%$/.test(value)) return 'ram-high';
+  if (/^CPU \d+%$/.test(value)) return 'cpu-high';
+  if (/^Disk \d+% free$/.test(value)) return 'disk-low';
+  return value.toLowerCase();
 }
 
 async function sendSlack(text) {
@@ -187,6 +197,12 @@ async function sendSlack(text) {
   } catch (err) {
     console.error('Slack alert failed:', err.message);
   }
+}
+
+function slackHealthMessage(agent, health, issue) {
+  const m = agent.metrics || {};
+  const icon = health === 'warning' ? '⚠️' : '🔴';
+  return `${icon} SWISH CONTROL — ${health.toUpperCase()}\nRoom: ${agent.roomName}\nIssue: ${issue}\nCPU: ${m.cpuPercent ?? '—'}% | RAM: ${m.memoryPercent ?? '—'}%\nDisk Free: ${m.diskFreePercent ?? '—'}%\nHost: ${agent.hostname || '—'} | IP: ${m.localIp || '—'}\nAction: Please check the room.`;
 }
 
 function activeHealthIncident(agentId) {
@@ -222,25 +238,27 @@ function reconcile(agent) {
       existing.resolvedAt = at;
       existing.status = 'resolved';
       existing.resolution = 'Room returned to healthy state';
-      if (['critical', 'offline'].includes(existing.health)) sendSlack(`✅ RESOLVED — ${agent.roomName}\n${existing.message}`);
+      sendSlack(`✅ SWISH CONTROL — RESOLVED\nRoom: ${agent.roomName}\nResolved: ${existing.message}\nStatus: Healthy`);
     }
   } else {
-    if (existing && (existing.health !== next.health || existing.message !== next.issue)) {
-      existing.resolvedAt = at;
-      existing.status = 'resolved';
-      existing.resolution = `Replaced by ${next.health}: ${next.issue}`;
-    }
+    const sameCondition = existing && existing.health === next.health && issueKey(existing.message) === issueKey(next.issue);
 
-    if (!activeHealthIncident(agent.agentId)) {
+    if (sameCondition) {
+      existing.message = next.issue;
+      existing.lastUpdatedAt = at;
+    } else {
+      if (existing) {
+        existing.resolvedAt = at;
+        existing.status = 'resolved';
+        existing.resolution = `Replaced by ${next.health}: ${next.issue}`;
+      }
+
       state.incidents.unshift({
         id: crypto.randomUUID(), agentId: agent.agentId, roomId: agent.roomId, roomName: agent.roomName,
         kind: 'health', health: next.health, severity: next.health === 'warning' ? 'warning' : 'critical',
         message: next.issue, openedAt: at, resolvedAt: null, status: 'open'
       });
-      if (['critical', 'offline'].includes(next.health)) {
-        const m = agent.metrics || {};
-        sendSlack(`🔴 SWISH CONTROL — ${next.health.toUpperCase()}\nRoom: ${agent.roomName}\nIssue: ${next.issue}\nCPU: ${m.cpuPercent ?? '—'}% | RAM: ${m.memoryPercent ?? '—'}%\nHost: ${agent.hostname || '—'} | IP: ${m.localIp || '—'}`);
-      }
+      sendSlack(slackHealthMessage(agent, next.health, next.issue));
     }
   }
 
