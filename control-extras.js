@@ -182,6 +182,49 @@ renderRoomDetail = function renderRoomDetailWithAdmin(force = false) {
   else els.roomDetail.append(bar);
 };
 
+function renderAgentShell() {
+  let shell = document.getElementById('agentShell');
+  if (!shell) {
+    shell = document.createElement('section');
+    shell.id = 'agentShell';
+    shell.className = 'agent-shell';
+    document.body.append(shell);
+  }
+
+  shell.innerHTML = `
+    <div class="agent-card">
+      <div class="agent-kicker">SWISH CONTROL AGENT</div>
+      <h1>${escapeHtml(appConfig.roomName || 'Room Agent')}</h1>
+      <div class="agent-status-row"><span class="agent-live-dot"></span><strong>Monitoring active</strong></div>
+      <div class="agent-meta">${escapeHtml(appConfig.serverUrl || 'Server not configured')}</div>
+      <div class="agent-actions">
+        <button id="agentHideBtn" class="ghost">Hide Window</button>
+        <button id="agentChangeModeBtn" class="primary">Change Mode</button>
+      </div>
+      <div class="agent-note">Hiding this window does not stop monitoring.</div>
+    </div>
+  `;
+
+  document.body.classList.add('agent-ui-mode');
+  document.getElementById('agentHideBtn')?.addEventListener('click', () => window.close());
+  document.getElementById('agentChangeModeBtn')?.addEventListener('click', async () => {
+    await window.swish.saveAppConfig({ role: '' });
+    await window.swish.restartApp();
+  });
+}
+
+function clearAgentShell() {
+  document.body.classList.remove('agent-ui-mode');
+  document.getElementById('agentShell')?.remove();
+}
+
+const baseApplyRoleUi = applyRoleUi;
+applyRoleUi = function applyRoleUiWithAgentShell() {
+  baseApplyRoleUi();
+  if (appConfig.role === 'agent') renderAgentShell();
+  else clearAgentShell();
+};
+
 const baseRefreshControlData = refreshControlData;
 refreshControlData = async function refreshControlDataWithServerState() {
   try {
