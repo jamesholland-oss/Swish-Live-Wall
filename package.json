@@ -1,6 +1,6 @@
 {
   "name": "swish-live-wall",
-  "version": "2.0.0-beta.4",
+  "version": "2.0.0-beta.5",
   "description": "Swish Control — live multiview, protected room health dashboard, incidents, and background room agent",
   "main": "main.js",
   "author": "Swish Breaks",
@@ -9,7 +9,7 @@
     "start": "electron .",
     "start:server": "node control-server/server-v2.js",
     "start:agent": "node agent/agent.js",
-    "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check live-wall-compat.js && node --check network-compat.js && node --check control-extras.js && node --check agent/agent.js && node --check control-server/server-v2.js",
+    "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check windows-tiktok-compat.js && node --check live-wall-compat.js && node --check network-compat.js && node --check control-extras.js && node --check agent/agent.js && node --check control-server/server-v2.js",
     "dist:mac": "electron-builder --mac dmg zip --publish never",
     "dist:win": "electron-builder --win nsis portable --publish never",
     "dist": "electron-builder -mwl --publish never"
@@ -26,6 +26,7 @@
       "main.js",
       "preload.js",
       "renderer.js",
+      "windows-tiktok-compat.js",
       "live-wall-compat.js",
       "network-compat.js",
       "control-extras.js",
