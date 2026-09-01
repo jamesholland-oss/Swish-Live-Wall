@@ -5,6 +5,8 @@ const SLACK_WEBHOOK_URL = String(process.env.SLACK_WEBHOOK_URL || '');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const OFFLINE_AFTER_MS = Math.max(15000, Number(process.env.OFFLINE_AFTER_MS || 30000));
+const STATUS_TIME_ZONE = process.env.STATUS_TIME_ZONE || 'America/New_York';
+const STATUS_HOURS = new Set([0, 9, 13, 17, 20]);
 const originalFetch = global.fetch.bind(global);
 
 function polishSlackText(text) {
@@ -63,7 +65,7 @@ function online(value) {
   return 'N/A';
 }
 
-function hourlyMessage(agent) {
+function statusMessage(agent) {
   const metrics = agent.metrics || {};
   const apps = metrics.productionApps || {};
   const ram = metrics.memoryPressurePercent != null ? metrics.memoryPressurePercent : metrics.memoryPercent;
@@ -85,7 +87,7 @@ function hourlyMessage(agent) {
       : 'N/A';
 
   return [
-    `${agent.roomName} — Hourly Status`,
+    `${agent.roomName} — Status Update`,
     '',
     `CPU: ${pct(metrics.cpuPercent)}`,
     `RAM: ${pct(ram)}`,
@@ -99,7 +101,7 @@ function hourlyMessage(agent) {
   ].join('\n');
 }
 
-async function sendHourlyStatuses() {
+async function sendStatuses() {
   if (!SLACK_WEBHOOK_URL) return;
   const state = readState();
   if (!state?.agents) return;
@@ -111,27 +113,45 @@ async function sendHourlyStatuses() {
       const response = await originalFetch(SLACK_WEBHOOK_URL, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: hourlyMessage(agent) })
+        body: JSON.stringify({ text: statusMessage(agent) })
       });
-      if (!response.ok) console.error(`Hourly Slack status failed: HTTP ${response.status}`);
+      if (!response.ok) console.error(`Slack status failed: HTTP ${response.status}`);
     } catch (err) {
-      console.error('Hourly Slack status failed:', err.message);
+      console.error('Slack status failed:', err.message);
     }
   }
 }
 
-function scheduleHourlyStatuses() {
-  const now = new Date();
-  const next = new Date(now);
-  next.setMinutes(0, 0, 0);
-  next.setHours(next.getHours() + 1);
-  const delay = Math.max(1000, next.getTime() - now.getTime());
-
-  setTimeout(() => {
-    sendHourlyStatuses();
-    setInterval(sendHourlyStatuses, 60 * 60 * 1000).unref();
-  }, delay).unref();
+function zonedParts(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: STATUS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute)
+  };
 }
 
-scheduleHourlyStatuses();
+let lastStatusSlot = '';
+function checkScheduledStatus() {
+  const now = zonedParts();
+  if (now.minute !== 0 || !STATUS_HOURS.has(now.hour)) return;
+  const slot = `${now.year}-${String(now.month).padStart(2, '0')}-${String(now.day).padStart(2, '0')}-${String(now.hour).padStart(2, '0')}`;
+  if (slot === lastStatusSlot) return;
+  lastStatusSlot = slot;
+  sendStatuses();
+}
+
+setInterval(checkScheduledStatus, 30 * 1000).unref();
+checkScheduledStatus();
 require('./server-v2');
