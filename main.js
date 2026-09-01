@@ -14,6 +14,8 @@ app.commandLine.appendSwitch('disable-component-update');
 app.commandLine.appendSwitch('disable-domain-reliability');
 app.commandLine.appendSwitch('disable-features', 'MediaRouter,Translate');
 
+const SWISH_POKE_URL = 'https://www.tiktok.com/@swishpoke/live?enter_from_merge=others_homepage&enter_method=others_photo';
+
 const DEFAULT_STREAMS = [
   { id: 'stream-1', name: 'Swish Breaks FN', url: 'https://www.fanatics.live/shows/2fbba9a5-da47-443e-9944-e7f578aae30b', platform: 'Fanatics', roomId: '' },
   { id: 'stream-2', name: 'Swish Wax FN', url: 'https://www.fanatics.live/shows/86bfa9ee-a115-4804-b272-e342f8491626', platform: 'Fanatics', roomId: '' },
@@ -23,7 +25,7 @@ const DEFAULT_STREAMS = [
   { id: 'stream-6', name: 'Poke Swish', url: 'https://www.whatnot.com/live/031440c2-d8f3-48e2-b3f6-0d9ab1b55352?referringSource=autocomplete', platform: 'Whatnot', roomId: '' },
   { id: 'stream-7', name: 'Swish Breaks TT', url: 'https://www.tiktok.com/@swishbreaks/live?enter_from_merge=others_homepage&enter_method=others_photo', platform: 'TikTok', roomId: '' },
   { id: 'stream-8', name: 'Swish Rips', url: 'https://www.tiktok.com/@swish.rips/live?enter_from_merge=others_homepage&enter_method=others_photo', platform: 'TikTok', roomId: '' },
-  { id: 'stream-9', name: 'Swish Poke', url: 'https://www.tiktok.com/@swishpoke/live', platform: 'TikTok', roomId: '' },
+  { id: 'stream-9', name: 'Swish Poke', url: SWISH_POKE_URL, platform: 'TikTok', roomId: '' },
   { id: 'stream-10', name: 'Stream 10', url: '', platform: 'Other', roomId: '' }
 ];
 
@@ -103,11 +105,14 @@ function loadStreams() {
   if (Array.isArray(saved) && saved.length >= 1 && saved.length <= 150) {
     const normalized = saved.map(normalizeStream);
     const streamNine = normalized.find((stream) => stream.id === 'stream-9');
-    if (streamNine && !streamNine.url && (!streamNine.name || /^Stream 9$/i.test(streamNine.name))) {
-      streamNine.name = 'Swish Poke';
-      streamNine.url = 'https://www.tiktok.com/@swishpoke/live';
-      streamNine.platform = 'TikTok';
-      writeJson(streamsFile, normalized);
+    if (streamNine) {
+      const needsSwishPoke = streamNine.name !== 'Swish Poke' || streamNine.url !== SWISH_POKE_URL || streamNine.platform !== 'TikTok';
+      if (needsSwishPoke) {
+        streamNine.name = 'Swish Poke';
+        streamNine.url = SWISH_POKE_URL;
+        streamNine.platform = 'TikTok';
+        writeJson(streamsFile, normalized);
+      }
     }
     return normalized;
   }
