@@ -1,6 +1,6 @@
 {
   "name": "swish-live-wall",
-  "version": "2.0.0-beta.13",
+  "version": "2.0.0-beta.14",
   "description": "Swish Control — live multiview, protected room health dashboard, incidents, and background room agent",
   "main": "main.js",
   "author": "Swish Breaks",
