@@ -5,6 +5,9 @@ const crypto = require('crypto');
 const net = require('net');
 const { execFile } = require('child_process');
 
+const AGENT_VERSION = '2.0.0-beta.11';
+const MAX_DIAGNOSTIC_BYTES = 25 * 1024 * 1024;
+
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
@@ -322,6 +325,104 @@ function createCpuSampler() {
   };
 }
 
+function diagnosticRoots() {
+  const home = os.homedir();
+  if (process.platform === 'darwin') {
+    return [
+      ['obs-logs', path.join(home, 'Library', 'Application Support', 'obs-studio', 'logs')],
+      ['obs-crashes', path.join(home, 'Library', 'Application Support', 'obs-studio', 'crashes')],
+      ['diagnostic-reports', path.join(home, 'Library', 'Logs', 'DiagnosticReports')],
+      ['stream-deck-logs', path.join(home, 'Library', 'Logs', 'ElgatoStreamDeck')],
+      ['obsbot-logs', path.join(home, 'Library', 'Logs', 'OBSBOT Center')]
+    ];
+  }
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    return [
+      ['obs-logs', path.join(appData, 'obs-studio', 'logs')],
+      ['obs-crashes', path.join(appData, 'obs-studio', 'crashes')],
+      ['stream-deck-logs', path.join(appData, 'Elgato', 'StreamDeck', 'logs')],
+      ['obsbot-logs', path.join(localAppData, 'OBSBOT Center', 'logs')]
+    ];
+  }
+  return [];
+}
+
+function copyRecentDiagnostics(source, target, cutoffMs, budget) {
+  if (!fs.existsSync(source) || budget.bytes >= MAX_DIAGNOSTIC_BYTES) return;
+  let entries = [];
+  try { entries = fs.readdirSync(source, { withFileTypes: true }); } catch (_) { return; }
+
+  for (const entry of entries) {
+    if (budget.bytes >= MAX_DIAGNOSTIC_BYTES) break;
+    const sourcePath = path.join(source, entry.name);
+    const targetPath = path.join(target, entry.name);
+    if (entry.isDirectory()) {
+      copyRecentDiagnostics(sourcePath, targetPath, cutoffMs, budget);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+
+    let stat;
+    try { stat = fs.statSync(sourcePath); } catch (_) { continue; }
+    if (stat.mtimeMs < cutoffMs) continue;
+    if (stat.size <= 0 || stat.size > 8 * 1024 * 1024) continue;
+    if (budget.bytes + stat.size > MAX_DIAGNOSTIC_BYTES) continue;
+
+    try {
+      ensureDir(path.dirname(targetPath));
+      fs.copyFileSync(sourcePath, targetPath);
+      budget.bytes += stat.size;
+      budget.files += 1;
+    } catch (_) {}
+  }
+}
+
+async function buildDiagnosticsBundle(stateDir, hours = 24) {
+  const safeHours = Math.max(1, Math.min(168, Number(hours) || 24));
+  const diagnosticsDir = path.join(stateDir, 'diagnostics');
+  ensureDir(diagnosticsDir);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const workDir = path.join(diagnosticsDir, `swish-diagnostics-${stamp}`);
+  const archivePath = `${workDir}.zip`;
+  const cutoffMs = Date.now() - safeHours * 3600000;
+  const budget = { bytes: 0, files: 0 };
+  ensureDir(workDir);
+
+  for (const [label, root] of diagnosticRoots()) {
+    copyRecentDiagnostics(root, path.join(workDir, label), cutoffMs, budget);
+  }
+
+  fs.writeFileSync(path.join(workDir, 'README.txt'), [
+    'Swish Control diagnostics bundle',
+    `Generated: ${new Date().toISOString()}`,
+    `Hostname: ${os.hostname()}`,
+    `Platform: ${process.platform}-${process.arch}`,
+    `Window: last ${safeHours} hour(s)`,
+    `Files: ${budget.files}`,
+    '',
+    'This bundle is limited to predefined production-app log/crash locations.',
+    'Agent credentials, browser data, personal documents and arbitrary files are excluded.'
+  ].join('\n'));
+
+  let zipped = false;
+  if (process.platform === 'darwin') {
+    const result = await execFilePromise('/usr/bin/ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', workDir, archivePath], 30000);
+    zipped = result.ok && fs.existsSync(archivePath);
+  } else if (process.platform === 'win32') {
+    const escapedSource = workDir.replace(/'/g, "''");
+    const escapedTarget = archivePath.replace(/'/g, "''");
+    const command = `Compress-Archive -Path '${escapedSource}\\*' -DestinationPath '${escapedTarget}' -Force`;
+    const result = await execFilePromise('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], 30000);
+    zipped = result.ok && fs.existsSync(archivePath);
+  }
+
+  try { fs.rmSync(workDir, { recursive: true, force: true }); } catch (_) {}
+  if (!zipped) throw new Error('Unable to create diagnostics archive.');
+  return { archivePath, files: budget.files, bytes: budget.bytes, hours: safeHours };
+}
+
 function startAgent(options = {}) {
   const serverUrl = normalizeServerUrl(options.serverUrl || process.env.SWISH_CONTROL_URL);
   const roomName = String(options.roomName || process.env.SWISH_ROOM_NAME || os.hostname()).trim();
@@ -415,6 +516,36 @@ function startAgent(options = {}) {
     };
   }
 
+  async function handleCommands(commands, auth) {
+    if (!Array.isArray(commands) || !commands.length) return;
+    for (const command of commands.slice(0, 3)) {
+      if (command?.type !== 'collect-diagnostics' || !command.id) continue;
+      let bundle;
+      try {
+        bundle = await buildDiagnosticsBundle(stateDir, command.hours || 24);
+        const body = fs.readFileSync(bundle.archivePath);
+        const response = await fetch(`${serverUrl}/api/agent/diagnostics/${encodeURIComponent(command.id)}`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/zip',
+            'x-swish-file-name': path.basename(bundle.archivePath),
+            authorization: `Bearer ${auth.token}`
+          },
+          body
+        });
+        if (!response.ok && response.status !== 404) {
+          console.error(`[Swish Agent] Diagnostics upload failed (${response.status})`);
+        }
+      } catch (err) {
+        console.error(`[Swish Agent] Diagnostics collection failed: ${err.message}`);
+      } finally {
+        if (bundle?.archivePath) {
+          try { fs.unlinkSync(bundle.archivePath); } catch (_) {}
+        }
+      }
+    }
+  }
+
   async function heartbeat() {
     if (stopped) return;
 
@@ -432,9 +563,9 @@ function startAgent(options = {}) {
           roomName,
           hostname: os.hostname(),
           platform: `${process.platform}-${process.arch}`,
-          appVersion: '2.0.0-beta.7',
+          appVersion: AGENT_VERSION,
           metrics: await collectMetrics(),
-          capabilities: ['production-app-health', 'shade-mount-health', 'mac-memory-pressure']
+          capabilities: ['production-app-health', 'shade-mount-health', 'mac-memory-pressure', 'diagnostics-bundle-v1']
         })
       });
 
@@ -444,10 +575,11 @@ function startAgent(options = {}) {
         throw new Error('Agent credentials rejected; re-enrollment required.');
       }
 
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
         throw new Error(data.error || `Heartbeat failed (${response.status})`);
       }
+      await handleCommands(data.commands, auth);
     } catch (err) {
       console.error(`[Swish Agent] ${err.message}`);
     } finally {
@@ -482,4 +614,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { startAgent };
+module.exports = { startAgent, buildDiagnosticsBundle };
