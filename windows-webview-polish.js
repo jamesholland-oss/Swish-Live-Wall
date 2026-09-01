@@ -13,6 +13,7 @@ const WINDOWS_GUEST_CSS = [
   'html, body {',
   '  max-width: 100vw !important;',
   '  overflow-x: hidden !important;',
+  '  overscroll-behavior: none !important;',
   '  scrollbar-width: none !important;',
   '  -ms-overflow-style: none !important;',
   '}',
@@ -49,8 +50,22 @@ function installWindowsHostPolish() {
     '  height: 0 !important;',
     '  display: none !important;',
     '}',
+    '.swish-windows #wallPage {',
+    '  overflow: hidden !important;',
+    '  overscroll-behavior: none !important;',
+    '}',
+    '.swish-windows .wall-grid {',
+    '  overflow: hidden !important;',
+    '  overscroll-behavior: none !important;',
+    '}',
     '.swish-windows .phone-stage, .swish-windows .phone-frame, .swish-windows .room-phone-frame {',
     '  overflow: hidden !important;',
+    '}',
+    '.swish-windows .stream-tile {',
+    '  contain: paint;',
+    '}',
+    '.swish-windows .phone-frame webview, .swish-windows .room-phone-frame webview {',
+    '  outline: 0 !important;',
     '}'
   ].join('\n');
   (document.head || document.documentElement).appendChild(style);
@@ -65,8 +80,6 @@ async function applyWindowsGuestPolish(view) {
     if (typeof view.insertCSS === 'function') await view.insertCSS(WINDOWS_GUEST_CSS);
   } catch (_) {}
 
-  // Fallback for Electron/provider combinations where insertCSS is delayed or
-  // discarded during navigation. This is intentionally presentation-only.
   try {
     const script = `(() => {
       const id = 'swish-control-windows-polish';
@@ -91,11 +104,7 @@ createLegacyStreamWebview = function createPolishedWindowsStreamWebview(stream) 
   if (!view || !SWISH_WINDOWS) return view;
 
   const isTikTok = platformFor(stream) === 'TikTok';
-  if (isTikTok) {
-    // Allow legitimate provider auth windows (Google/email/etc.) when TikTok
-    // requests them. The underlying stream partition remains persistent.
-    view.setAttribute('allowpopups', '');
-  }
+  if (isTikTok) view.setAttribute('allowpopups', '');
 
   const polish = () => applyWindowsGuestPolish(view);
   view.addEventListener('dom-ready', polish);
@@ -106,8 +115,6 @@ createLegacyStreamWebview = function createPolishedWindowsStreamWebview(stream) 
   return view;
 };
 
-// Room preview creation was bound before this Windows wrapper loaded. Point it
-// at the polished constructor too so Wall and Rooms stay visually consistent.
 createStreamWebview = createLegacyStreamWebview;
 
 const swishBuildLegacyWallTile = buildLegacyWallTile;
@@ -140,8 +147,6 @@ buildLegacyWallTile = function buildWindowsCompatibleWallTile(stream) {
       return;
     }
 
-    // Authenticate in the same persistent webview/session, but with a normal
-    // Windows Chrome identity. After login, click LIVE to return to the stream.
     try { view.setUserAgent(WINDOWS_TIKTOK_LOGIN_UA); } catch (_) {}
     view.setAttribute('useragent', WINDOWS_TIKTOK_LOGIN_UA);
     view.loadURL('https://www.tiktok.com/login');
