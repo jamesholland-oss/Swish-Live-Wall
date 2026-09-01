@@ -23,7 +23,7 @@ const DEFAULT_STREAMS = [
   { id: 'stream-6', name: 'Poke Swish', url: 'https://www.whatnot.com/live/031440c2-d8f3-48e2-b3f6-0d9ab1b55352?referringSource=autocomplete', platform: 'Whatnot', roomId: '' },
   { id: 'stream-7', name: 'Swish Breaks TT', url: 'https://www.tiktok.com/@swishbreaks/live?enter_from_merge=others_homepage&enter_method=others_photo', platform: 'TikTok', roomId: '' },
   { id: 'stream-8', name: 'Swish Rips', url: 'https://www.tiktok.com/@swish.rips/live?enter_from_merge=others_homepage&enter_method=others_photo', platform: 'TikTok', roomId: '' },
-  { id: 'stream-9', name: 'Stream 9', url: '', platform: 'Other', roomId: '' },
+  { id: 'stream-9', name: 'Swish Poke', url: 'https://www.tiktok.com/@swishpoke/live', platform: 'TikTok', roomId: '' },
   { id: 'stream-10', name: 'Stream 10', url: '', platform: 'Other', roomId: '' }
 ];
 
@@ -98,8 +98,19 @@ function normalizeStream(stream, index) {
 }
 
 function loadStreams() {
-  const saved = readJson(jsonPath('streams.json'), null);
-  if (Array.isArray(saved) && saved.length >= 1 && saved.length <= 150) return saved.map(normalizeStream);
+  const streamsFile = jsonPath('streams.json');
+  const saved = readJson(streamsFile, null);
+  if (Array.isArray(saved) && saved.length >= 1 && saved.length <= 150) {
+    const normalized = saved.map(normalizeStream);
+    const streamNine = normalized.find((stream) => stream.id === 'stream-9');
+    if (streamNine && !streamNine.url && (!streamNine.name || /^Stream 9$/i.test(streamNine.name))) {
+      streamNine.name = 'Swish Poke';
+      streamNine.url = 'https://www.tiktok.com/@swishpoke/live';
+      streamNine.platform = 'TikTok';
+      writeJson(streamsFile, normalized);
+    }
+    return normalized;
+  }
   return DEFAULT_STREAMS.map(normalizeStream);
 }
 
