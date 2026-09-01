@@ -8,7 +8,8 @@
 
 const liveWallCompatState = {
   configSignature: '',
-  exitButton: null
+  exitButton: null,
+  audioMutedByStream: new Map()
 };
 
 function wallConfigSignature() {
@@ -23,6 +24,44 @@ function wallConfigSignature() {
 
 function wallViews() {
   return [...els.wallGrid.querySelectorAll('.stream-tile webview')];
+}
+
+function streamMuted(streamId) {
+  return liveWallCompatState.audioMutedByStream.has(streamId)
+    ? liveWallCompatState.audioMutedByStream.get(streamId)
+    : true;
+}
+
+function applyStreamAudioState(view, muted) {
+  if (!view) return;
+  try { view.setAudioMuted(Boolean(muted)); } catch (_) {}
+  try {
+    view.executeJavaScript(`
+      (() => {
+        document.querySelectorAll('video,audio').forEach((media) => {
+          media.muted = ${muted ? 'true' : 'false'};
+          if (!${muted ? 'true' : 'false'} && media.volume === 0) media.volume = 1;
+          if (media instanceof HTMLVideoElement) media.disablePictureInPicture = true;
+        });
+      })();
+    `).catch(() => {});
+  } catch (_) {}
+}
+
+function updateAudioButton(tile, muted) {
+  const button = tile?.querySelector('.audio-toggle');
+  if (!button) return;
+  button.textContent = muted ? '🔇' : '🔊';
+  button.title = muted ? 'Unmute this stream' : 'Mute this stream';
+  button.setAttribute('aria-label', button.title);
+}
+
+function setStreamMuted(streamId, muted) {
+  liveWallCompatState.audioMutedByStream.set(streamId, Boolean(muted));
+  const tile = els.wallGrid.querySelector(`.stream-tile[data-stream-id="${CSS.escape(streamId)}"]`);
+  const view = tile?.querySelector('webview');
+  applyStreamAudioState(view, Boolean(muted));
+  updateAudioButton(tile, Boolean(muted));
 }
 
 function createLegacyStreamWebview(stream) {
@@ -42,17 +81,13 @@ function createLegacyStreamWebview(stream) {
 
   view.addEventListener('dom-ready', () => {
     try {
-      view.setAudioMuted(true);
       view.setUserAgent(ua);
-      view.executeJavaScript(`
-        (() => {
-          document.querySelectorAll('video').forEach((video) => {
-            video.muted = true;
-            video.disablePictureInPicture = true;
-          });
-        })();
-      `).catch(() => {});
+      applyStreamAudioState(view, streamMuted(stream.id));
     } catch (_) {}
+  });
+
+  view.addEventListener('did-finish-load', () => {
+    applyStreamAudioState(view, streamMuted(stream.id));
   });
 
   return view;
@@ -83,6 +118,14 @@ function buildLegacyWallTile(stream) {
   const controls = document.createElement('div');
   controls.className = 'stream-controls';
 
+  const audio = document.createElement('button');
+  audio.className = 'micro-btn audio-toggle';
+  updateAudioButton({ querySelector: () => audio }, streamMuted(stream.id));
+  audio.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setStreamMuted(stream.id, !streamMuted(stream.id));
+  });
+
   const refresh = document.createElement('button');
   refresh.className = 'micro-btn';
   refresh.textContent = '↻';
@@ -101,7 +144,7 @@ function buildLegacyWallTile(stream) {
     toggleFullscreen(stream.id);
   });
 
-  controls.append(refresh, focus);
+  controls.append(audio, refresh, focus);
   header.append(identity, controls);
   tile.append(header);
 
@@ -318,18 +361,3 @@ renderCurrentPage = function renderCurrentPageCompat() {
   if (currentPage === 'rooms') renderRooms();
   if (currentPage === 'incidents') renderIncidents();
 };
-
-const v2SwitchPage = switchPage;
-switchPage = function switchPageCompat(page) {
-  if (page !== 'wall') exitCompatFullscreen(false);
-  return v2SwitchPage(page);
-};
-
-// Escape remains supported, but it is no longer the only exit route.
-window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && fullscreenStreamId) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    exitCompatFullscreen(true);
-  }
-}, true);
