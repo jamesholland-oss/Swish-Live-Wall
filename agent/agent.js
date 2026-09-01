@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const net = require('net');
 const { execFile } = require('child_process');
 
-const AGENT_VERSION = '2.0.0-beta.13';
+const AGENT_VERSION = '2.0.0-beta.14';
 const MAX_DIAGNOSTIC_BYTES = 25 * 1024 * 1024;
 
 function ensureDir(dir) {
