@@ -1,18 +1,50 @@
 // Monitoring/admin controls layered on top of the stable Swish Control UI.
+// Provider-specific presentation belongs in the dedicated compatibility files;
+// do not override TikTok user agents here.
 
-// TikTok behaves poorly when Electron on Windows presents the iPhone Safari
-// user agent that is proven on macOS. Keep the Mac behavior unchanged, but
-// present TikTok with a normal Windows Chrome identity on Windows builds.
-const WINDOWS_TIKTOK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
-const baseUserAgentForPlatform = userAgentFor;
-userAgentFor = function userAgentForPlatform(url) {
+const CONTROL_SESSION_KEY = 'swish-control-session-v1';
+
+function readSavedControlSession() {
   try {
-    const host = new URL(url).hostname.toLowerCase();
-    const isTikTok = host === 'tiktok.com' || host.endsWith('.tiktok.com');
-    const isWindows = /Win/i.test(navigator.platform || '') || /Windows/i.test(navigator.userAgent || '');
-    if (isTikTok && isWindows) return WINDOWS_TIKTOK_UA;
+    const saved = JSON.parse(localStorage.getItem(CONTROL_SESSION_KEY) || 'null');
+    if (!saved?.token || !saved?.user) return null;
+    return saved;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveControlSession(token, user) {
+  try {
+    if (!token || !user) return;
+    localStorage.setItem(CONTROL_SESSION_KEY, JSON.stringify({ token, user }));
   } catch (_) {}
-  return baseUserAgentForPlatform(url);
+}
+
+function clearControlSession() {
+  try { localStorage.removeItem(CONTROL_SESSION_KEY); } catch (_) {}
+}
+
+// Restore the most recent server session before bootstrap resumes from its IPC
+// reads. The server remains authoritative and a 401 still signs the user out.
+const savedControlSession = readSavedControlSession();
+if (savedControlSession) {
+  authToken = savedControlSession.token;
+  authUser = savedControlSession.user;
+}
+
+const baseFetchJsonForSession = fetchJson;
+fetchJson = async function fetchJsonWithSessionPersistence(pathname, options = {}, timeoutMs = 5000) {
+  try {
+    const data = await baseFetchJsonForSession(pathname, options, timeoutMs);
+    if (pathname === '/api/login' && data?.token && data?.user) {
+      saveControlSession(data.token, data.user);
+    }
+    return data;
+  } catch (err) {
+    if (err?.status === 401 && pathname !== '/api/login') clearControlSession();
+    throw err;
+  }
 };
 
 const serverStateEl = document.getElementById('serverState');
@@ -241,6 +273,10 @@ startPolling = function startPollingWithServerHealth() {
   baseStartPolling();
   pingControlServer();
 };
+
+// The original click listener is already bound by renderer.js, so use a small
+// secondary listener only to clear the persisted copy when the user signs out.
+els.profileBtn?.addEventListener('click', () => clearControlSession());
 
 setInterval(() => {
   if (appConfig.serverUrl) pingControlServer();
