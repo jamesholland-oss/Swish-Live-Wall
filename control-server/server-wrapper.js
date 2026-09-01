@@ -9,6 +9,35 @@ const STATUS_TIME_ZONE = process.env.STATUS_TIME_ZONE || 'America/New_York';
 const STATUS_HOURS = new Set([0, 9, 13, 17, 20]);
 const originalFetch = global.fetch.bind(global);
 
+function zonedParts(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: STATUS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    weekday: String(parts.weekday || ''),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute)
+  };
+}
+
+function inPlannedMaintenance(date = new Date()) {
+  const now = zonedParts(date);
+  if (now.weekday === 'Mon' && now.hour >= 1 && now.hour < 9) return true;
+  if (now.weekday === 'Thu' && now.hour >= 2 && now.hour < 9) return true;
+  return false;
+}
+
 function polishSlackText(text) {
   const value = String(text || '');
 
@@ -38,7 +67,12 @@ global.fetch = async (url, options = {}) => {
     try {
       const payload = JSON.parse(String(options.body));
       if (payload && typeof payload.text === 'string') {
-        payload.text = polishSlackText(payload.text);
+        const rawText = payload.text;
+        const isOfflineAlert = /\nIssue: Agent offline\n/.test(rawText);
+        if (isOfflineAlert && inPlannedMaintenance()) {
+          return new Response('', { status: 204 });
+        }
+        payload.text = polishSlackText(rawText);
         options = { ...options, body: JSON.stringify(payload) };
       }
     } catch (_) {}
@@ -102,7 +136,7 @@ function statusMessage(agent) {
 }
 
 async function sendStatuses() {
-  if (!SLACK_WEBHOOK_URL) return;
+  if (!SLACK_WEBHOOK_URL || inPlannedMaintenance()) return;
   const state = readState();
   if (!state?.agents) return;
 
@@ -120,26 +154,6 @@ async function sendStatuses() {
       console.error('Slack status failed:', err.message);
     }
   }
-}
-
-function zonedParts(date = new Date()) {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: STATUS_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23'
-  });
-  const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
-  return {
-    year: Number(parts.year),
-    month: Number(parts.month),
-    day: Number(parts.day),
-    hour: Number(parts.hour),
-    minute: Number(parts.minute)
-  };
 }
 
 let lastStatusSlot = '';
