@@ -1,6 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 
+// Control stations should stay signed in across normal day-to-day use. Keep a
+// minimum seven-day server session even if Railway still has the older 12-hour
+// environment value configured. The client persists the token locally, while
+// server-v2 remains authoritative and can still reject/revoke expired tokens.
+const configuredSessionHours = Number(process.env.CONTROL_SESSION_HOURS || 0);
+process.env.CONTROL_SESSION_HOURS = String(Math.max(168, Number.isFinite(configuredSessionHours) ? configuredSessionHours : 0));
+
 const SLACK_WEBHOOK_URL = String(process.env.SLACK_WEBHOOK_URL || '');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
