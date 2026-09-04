@@ -13,7 +13,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const OFFLINE_AFTER_MS = Math.max(15000, Number(process.env.OFFLINE_AFTER_MS || 30000));
 const STATUS_TIME_ZONE = process.env.STATUS_TIME_ZONE || 'America/New_York';
-const STATUS_HOURS = new Set([0, 9, 13, 17, 20]);
+const STATUS_HOUR = 17;
 const originalFetch = global.fetch.bind(global);
 
 function zonedParts(date = new Date()) {
@@ -45,6 +45,10 @@ function inPlannedMaintenance(date = new Date()) {
   return false;
 }
 
+function isCriticalIssue(issue) {
+  return issue === 'Agent offline' || issue === 'OBS offline';
+}
+
 function polishSlackText(text) {
   const value = String(text || '');
 
@@ -60,11 +64,6 @@ function polishSlackText(text) {
 
   if (issue === 'Agent offline') recovery = 'Agent online';
   else if (issue === 'OBS offline') recovery = 'OBS online';
-  else if (issue === 'OBS WebSocket unavailable' || issue === 'OBS WebSocket not authenticated') recovery = 'OBS connection restored';
-  else if (issue === 'Shade storage unmounted') recovery = 'Shade storage mounted';
-  else if (/^RAM \d+%$/.test(issue)) recovery = 'RAM back to normal';
-  else if (/^CPU \d+%$/.test(issue)) recovery = 'CPU back to normal';
-  else if (/^Disk \d+% free$/.test(issue)) recovery = 'Storage back to normal';
 
   return `Room: ${room}\n${recovery}`;
 }
@@ -75,10 +74,19 @@ global.fetch = async (url, options = {}) => {
       const payload = JSON.parse(String(options.body));
       if (payload && typeof payload.text === 'string') {
         const rawText = payload.text;
-        const isOfflineAlert = /\nIssue: Agent offline\n/.test(rawText);
-        if (isOfflineAlert && inPlannedMaintenance()) {
+        const alert = rawText.match(/^Room: (.+)\nIssue: (.+)\nAction: (.+)$/s);
+        const resolved = rawText.match(/^Room: (.+)\nResolved: (.+)$/s);
+
+        if (alert) {
+          const issue = alert[2];
+          if (!isCriticalIssue(issue)) return new Response('', { status: 204 });
+          if (issue === 'Agent offline' && inPlannedMaintenance()) return new Response('', { status: 204 });
+        }
+
+        if (resolved && !isCriticalIssue(resolved[2])) {
           return new Response('', { status: 204 });
         }
+
         payload.text = polishSlackText(rawText);
         options = { ...options, body: JSON.stringify(payload) };
       }
@@ -106,20 +114,20 @@ function online(value) {
   return 'N/A';
 }
 
-function statusMessage(agent) {
+function roomStatusBlock(agent, now = Date.now()) {
   const metrics = agent.metrics || {};
   const apps = metrics.productionApps || {};
   const ram = metrics.memoryPressurePercent != null ? metrics.memoryPressurePercent : metrics.memoryPercent;
+  const isAgentOnline = Boolean(agent.lastSeen) && now - Number(agent.lastSeen) <= OFFLINE_AFTER_MS;
 
-  const obsWebSocket = metrics.obsRunning === false
-    ? 'N/A'
-    : metrics.obsWebSocketReachable === false
-      ? 'Unavailable'
-      : metrics.obsWebSocketAuthenticated === false
-        ? 'Not authenticated'
-        : metrics.obsWebSocketReachable === true
-          ? 'Connected'
-          : 'N/A';
+  if (!isAgentOnline) {
+    return [
+      `${agent.roomName}`,
+      'Agent: Offline',
+      'OBS: N/A | Shade: N/A | Stream Deck: N/A | Camera: N/A',
+      'CPU: N/A | RAM: N/A | Disk: N/A'
+    ].join('\n');
+  }
 
   const shade = apps.shade?.mounted === true
     ? 'Mounted'
@@ -128,49 +136,59 @@ function statusMessage(agent) {
       : 'N/A';
 
   return [
-    `${agent.roomName} — Status Update`,
-    '',
-    `CPU: ${pct(metrics.cpuPercent)}`,
-    `RAM: ${pct(ram)}`,
-    `Disk: ${metrics.diskFreePercent == null ? 'N/A' : `${pct(metrics.diskFreePercent)} free`}`,
-    '',
-    `OBS: ${online(metrics.obsRunning)}`,
-    `OBS WebSocket: ${obsWebSocket}`,
-    `Shade: ${shade}`,
-    `Stream Deck: ${online(apps.streamDeck?.running)}`,
-    `Camera Control: ${online(apps.cameraControl?.running)}`
+    `${agent.roomName}`,
+    `Agent: Online | OBS: ${online(metrics.obsRunning)} | Shade: ${shade}`,
+    `Stream Deck: ${online(apps.streamDeck?.running)} | Camera: ${online(apps.cameraControl?.running)}`,
+    `CPU: ${pct(metrics.cpuPercent)} | RAM: ${pct(ram)} | Disk: ${metrics.diskFreePercent == null ? 'N/A' : `${pct(metrics.diskFreePercent)} free`}`
   ].join('\n');
 }
 
-async function sendStatuses() {
+function dailyStatusMessage(agents) {
+  const now = Date.now();
+  const blocks = agents
+    .slice()
+    .sort((a, b) => String(a.roomName || '').localeCompare(String(b.roomName || '')))
+    .map((agent) => roomStatusBlock(agent, now));
+
+  return [
+    'Swish Control — 5:00 PM Daily Status',
+    '',
+    ...blocks.reduce((lines, block, index) => {
+      if (index) lines.push('');
+      lines.push(block);
+      return lines;
+    }, [])
+  ].join('\n');
+}
+
+async function sendDailyStatus() {
   if (!SLACK_WEBHOOK_URL || inPlannedMaintenance()) return;
   const state = readState();
   if (!state?.agents) return;
 
-  const now = Date.now();
-  for (const agent of Object.values(state.agents)) {
-    if (!agent?.lastSeen || now - Number(agent.lastSeen) > OFFLINE_AFTER_MS) continue;
-    try {
-      const response = await originalFetch(SLACK_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: statusMessage(agent) })
-      });
-      if (!response.ok) console.error(`Slack status failed: HTTP ${response.status}`);
-    } catch (err) {
-      console.error('Slack status failed:', err.message);
-    }
+  const agents = Object.values(state.agents);
+  if (!agents.length) return;
+
+  try {
+    const response = await originalFetch(SLACK_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: dailyStatusMessage(agents) })
+    });
+    if (!response.ok) console.error(`Slack daily status failed: HTTP ${response.status}`);
+  } catch (err) {
+    console.error('Slack daily status failed:', err.message);
   }
 }
 
 let lastStatusSlot = '';
 function checkScheduledStatus() {
   const now = zonedParts();
-  if (now.minute !== 0 || !STATUS_HOURS.has(now.hour)) return;
-  const slot = `${now.year}-${String(now.month).padStart(2, '0')}-${String(now.day).padStart(2, '0')}-${String(now.hour).padStart(2, '0')}`;
+  if (now.minute !== 0 || now.hour !== STATUS_HOUR) return;
+  const slot = `${now.year}-${String(now.month).padStart(2, '0')}-${String(now.day).padStart(2, '0')}`;
   if (slot === lastStatusSlot) return;
   lastStatusSlot = slot;
-  sendStatuses();
+  sendDailyStatus();
 }
 
 setInterval(checkScheduledStatus, 30 * 1000).unref();
