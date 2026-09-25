@@ -431,3 +431,45 @@
     height: 560px;
   }
 }
+
+
+.stream-room-link {
+  cursor: pointer;
+}
+.stream-room-link:hover .stream-name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.room-detail-head {
+  position: relative;
+}
+
+.room-focus-toggle {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-left: auto;
+  font-family: 'Michroma', sans-serif;
+  font-size: 8px;
+}
+
+body.room-focus-mode .rooms-layout {
+  grid-template-columns: 1fr;
+}
+
+body.room-focus-mode .rooms-list {
+  display: none;
+}
+
+body.room-focus-mode .room-detail {
+  border-radius: 0;
+}
+
+body.room-focus-mode .room-live-layout {
+  grid-template-columns: minmax(0, 1.75fr) minmax(340px, .75fr);
+}
+
+body.room-focus-mode .room-live-layout .room-video-stage {
+  height: calc(100vh - 185px);
+  min-height: 620px;
+}
