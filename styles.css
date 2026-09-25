@@ -46,7 +46,7 @@ button:focus-visible, input:focus, select:focus { border-color: #607086 !importa
 .filter-pill.active { background: #f5f7fb; border-color: #f5f7fb; color: #07090d; font-weight: 800; }
 .toolbar-spacer { flex: 1; }
 .icon-action { min-width: 34px; height: 32px; padding: 0 9px; display: grid; place-items: center; background: var(--panel-2); }
-.wall-grid { min-height: calc(100% - 47px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 520px; gap: 8px; align-content: start; }
+.wall-grid { min-height: calc(100% - 47px); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 600px; gap: 8px; align-content: start; }
 .stream-tile { position: relative; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: #090b0f; }
 .stream-tile.health-warning { border-color: rgba(242, 201, 76, .72); }
 .stream-tile.health-critical { border-color: rgba(255, 77, 87, .9); }
@@ -179,7 +179,6 @@ th { position: sticky; top: 0; z-index: 1; background: var(--panel); color: var(
 .fatal-error { height: 100vh; display: grid; place-items: center; padding: 30px; color: #ffb7bc; text-align: center; }
 
 @media (max-width: 1500px) {
-  .wall-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .overview-rooms { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
