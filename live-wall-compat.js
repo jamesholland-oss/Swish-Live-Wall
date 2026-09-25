@@ -79,14 +79,25 @@ function createLegacyStreamWebview(stream) {
     'contextIsolation=yes,nodeIntegration=no,sandbox=yes,spellcheck=no,backgroundThrottling=yes'
   );
 
+  const applyProviderPresentation = () => {
+    try {
+      // Keep the proven V1.3 user agent/session behavior, but scale Fanatics
+      // slightly smaller so its native auction UI fits like Whatnot on the
+      // standard three-column wall.
+      view.setZoomFactor(platformFor(stream) === 'Fanatics' ? 0.84 : 1);
+    } catch (_) {}
+  };
+
   view.addEventListener('dom-ready', () => {
     try {
       view.setUserAgent(ua);
+      applyProviderPresentation();
       applyStreamAudioState(view, streamMuted(stream.id));
     } catch (_) {}
   });
 
   view.addEventListener('did-finish-load', () => {
+    applyProviderPresentation();
     applyStreamAudioState(view, streamMuted(stream.id));
   });
 
