@@ -69,6 +69,11 @@ button:focus-visible, input:focus, select:focus { border-color: #607086 !importa
 .phone-frame { height: 100%; max-height: 100%; aspect-ratio: 9 / 16; max-width: 100%; overflow: hidden; border-radius: 6px; background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,.06); }
 .stream-tile[data-platform="Whatnot"] .phone-frame,
 .stream-tile[data-platform="Fanatics"] .phone-frame { width: min(100%, 540px); height: 100%; aspect-ratio: auto; }
+.stream-tile[data-platform="Fanatics"] .phone-frame webview {
+  width: 125%;
+  min-width: 125%;
+  margin-left: -25%;
+}
 .stream-tile[data-platform="TikTok"] .phone-stage { gap: 8px; padding-inline: 8px; }
 .stream-tile[data-platform="TikTok"] .phone-frame { flex: 0 1 auto; }
 .phone-frame webview, .room-phone-frame webview { width: 100%; height: 100%; display: flex; background: black; }
@@ -89,6 +94,40 @@ button:focus-visible, input:focus, select:focus { border-color: #607086 !importa
 .tiktok-auction-kicker { color: var(--muted); font-family: "Michroma", "Inter", sans-serif; font-size: 7px; letter-spacing: .08em; }
 .tiktok-auction-value { margin-top: 5px; font-family: "Michroma", "Inter", sans-serif; font-size: 18px; line-height: 1.2; }
 .tiktok-auction-empty { color: var(--muted); font-size: 10px; line-height: 1.45; }
+
+.stream-off-air {
+  position: absolute;
+  inset: 5px;
+  z-index: 12;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  border-radius: 6px;
+  background:
+    radial-gradient(circle at 50% 36%, rgba(255,255,255,.045), transparent 34%),
+    #07090d;
+  text-align: center;
+}
+.stream-off-air-inner { max-width: 320px; }
+.stream-off-air-kicker {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-family: "Michroma", "Inter", sans-serif;
+  font-size: 8px;
+  letter-spacing: .12em;
+}
+.stream-off-air-title {
+  font-family: "Michroma", "Inter", sans-serif;
+  font-size: 18px;
+  line-height: 1.35;
+}
+.stream-off-air-subtitle {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .empty-stream { color: #606a78; font-size: 10px; font-weight: 700; }
 .wall-issue { position: absolute; z-index: 7; left: 8px; right: 8px; bottom: 8px; padding: 6px 8px; border-radius: 7px; font-size: 9px; font-weight: 800; letter-spacing: .025em; text-transform: uppercase; backdrop-filter: blur(5px); }
 .wall-issue.warning { background: rgba(71, 57, 10, .90); border: 1px solid rgba(242, 201, 76, .38); color: #ffe596; }
