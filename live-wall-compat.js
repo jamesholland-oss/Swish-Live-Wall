@@ -186,6 +186,16 @@ function buildLegacyWallTile(stream) {
     <span class="stream-name">${escapeHtml(stream.name)}</span>
   `;
 
+  if (stream.roomId && authToken && typeof userCan === 'function' && userCan('rooms:view')) {
+    identity.classList.add('stream-room-link');
+    identity.title = 'Open room dashboard';
+    identity.addEventListener('click', (event) => {
+      event.stopPropagation();
+      selectedRoomId = stream.roomId;
+      switchPage('rooms');
+    });
+  }
+
   const controls = document.createElement('div');
   controls.className = 'stream-controls';
 
