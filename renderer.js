@@ -253,7 +253,9 @@ async function refreshControlData() {
         roomName: room.roomName,
         health: room.health,
         issue: room.issue,
-        changedAt: room.healthChangedAt || room.lastSeenIso
+        changedAt: room.healthChangedAt || room.lastSeenIso,
+        agentOnline: room.lastSeen ? (Date.now() - Number(room.lastSeen) <= 30000) : false,
+        streamingActive: typeof room.metrics?.streamingActive === 'boolean' ? room.metrics.streamingActive : null
       }
     ]));
     renderRoomOptions();
