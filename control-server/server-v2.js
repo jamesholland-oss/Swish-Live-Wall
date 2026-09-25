@@ -695,8 +695,8 @@ async function ingestBusiness(req, res, roomId) {
 }
 
 async function removeAgent(req, res, agentId) {
-  const user = authUser(req);
-  if (!user) return sendJson(res, 401, { error: 'Authentication required.' });
+  const user = requirePermission(req, res, 'settings:manage');
+  if (!user) return;
   const agent = state.agents[agentId];
   if (!agent) return sendJson(res, 404, { error: 'Device not found.' });
 
@@ -752,8 +752,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/me') {
-      const user = requirePermission(req, res, 'technical:view');
-      if (!user) return;
+      const user = authUser(req);
+      if (!user) return sendJson(res, 401, { error: 'Authentication required.' });
       return sendJson(res, 200, { user: publicUser(user) });
     }
 
@@ -784,8 +784,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname.startsWith('/api/rooms/') && url.pathname.endsWith('/samples')) {
-      const user = authUser(req);
-      if (!user) return sendJson(res, 401, { error: 'Authentication required.' });
+      const user = requirePermission(req, res, 'technical:view');
+      if (!user) return;
       const roomId = decodeURIComponent(url.pathname.split('/')[3] || '');
       const agent = Object.values(state.agents).find((candidate) => candidate.roomId === roomId);
       if (!agent) return sendJson(res, 404, { error: 'Room not found.' });
@@ -797,8 +797,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && url.pathname === '/api/commands') {
-      const user = authUser(req);
-      if (!user) return sendJson(res, 401, { error: 'Authentication required.' });
+      const user = requirePermission(req, res, 'settings:manage');
+      if (!user) return;
       return sendJson(res, 403, { error: 'Remote recovery commands are intentionally disabled for the pilot.' });
     }
 
