@@ -448,18 +448,28 @@ function maybeSample(agent) {
   state.samples[agent.agentId] = samples;
 }
 
-function legacyRoomDisplayName(agent) {
-  const raw = String(agent?.roomName || '').trim();
+function canonicalRoomName(value) {
+  const raw = String(value || '').trim();
   const normalized = raw.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
-  if (normalized === 'sandbox' || normalized === 'sandbox agent') return 'SWISH WAX';
-  if (normalized === 'swish wax') return 'SWISH HITS';
+  if (
+    normalized === 'sandbox' ||
+    normalized === 'sandbox agent' ||
+    normalized === 'the sandbox'
+  ) return 'SWISH WAX';
+
+  if (
+    normalized === 'swish wax' ||
+    normalized === 'swish wax fn' ||
+    normalized === 'swish wax agent'
+  ) return 'SWISH HITS';
+
   return raw;
 }
 
 function displayRoomName(agent) {
   const configured = state.roomSettings?.[agent.roomId]?.displayName;
-  return String(configured || legacyRoomDisplayName(agent) || agent.roomId);
+  return String(configured || canonicalRoomName(agent.roomName) || agent.roomId);
 }
 
 function mediaForRoom(roomId, limit = 12) {
@@ -579,7 +589,7 @@ async function enroll(req, res) {
   if (!auth.startsWith('Bearer ') || !safeEqual(auth.slice(7).trim(), ENROLLMENT_KEY)) return sendJson(res, 401, { error: 'Invalid enrollment key.' });
 
   const body = await readJson(req);
-  const roomName = String(body.roomName || '').trim();
+  const roomName = canonicalRoomName(body.roomName);
   const hostname = String(body.hostname || '').trim();
   if (!roomName || !hostname) return sendJson(res, 400, { error: 'roomName and hostname are required.' });
 
@@ -626,7 +636,7 @@ async function heartbeat(req, res) {
   const body = await readJson(req);
   if (body.agentId && String(body.agentId) !== agent.agentId) return sendJson(res, 403, { error: 'Agent ID mismatch.' });
 
-  agent.roomName = String(body.roomName || agent.roomName);
+  agent.roomName = canonicalRoomName(body.roomName || agent.roomName);
   agent.hostname = String(body.hostname || agent.hostname);
   agent.platform = String(body.platform || agent.platform || '');
   agent.appVersion = String(body.appVersion || agent.appVersion || '');
