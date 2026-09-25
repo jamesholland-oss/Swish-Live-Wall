@@ -36,7 +36,8 @@ function blankState() {
     samples: {},
     removedDevices: [],
     media: [],
-    business: {}
+    business: {},
+    roomSettings: {}
   };
 }
 
@@ -52,7 +53,8 @@ function loadState() {
       samples: saved.samples || {},
       removedDevices: Array.isArray(saved.removedDevices) ? saved.removedDevices : [],
       media: Array.isArray(saved.media) ? saved.media : [],
-      business: saved.business && typeof saved.business === 'object' ? saved.business : {}
+      business: saved.business && typeof saved.business === 'object' ? saved.business : {},
+      roomSettings: saved.roomSettings && typeof saved.roomSettings === 'object' ? saved.roomSettings : {}
     };
   } catch (_) {
     return blankState();
@@ -350,7 +352,7 @@ function addInfoEvent(agent, message, extra = {}) {
     id: crypto.randomUUID(),
     agentId: agent.agentId,
     roomId: agent.roomId,
-    roomName: agent.roomName,
+    roomName: displayRoomName(agent),
     kind: 'info',
     severity: 'info',
     message,
@@ -401,7 +403,7 @@ function reconcile(agent) {
       id: crypto.randomUUID(),
       agentId: agent.agentId,
       roomId: agent.roomId,
-      roomName: agent.roomName,
+      roomName: displayRoomName(agent),
       kind: 'health',
       conditionKey: condition.key,
       health: condition.health,
@@ -444,6 +446,11 @@ function maybeSample(agent) {
   });
   if (samples.length > MAX_SAMPLES) samples.splice(0, samples.length - MAX_SAMPLES);
   state.samples[agent.agentId] = samples;
+}
+
+function displayRoomName(agent) {
+  const configured = state.roomSettings?.[agent.roomId]?.displayName;
+  return String(configured || agent.roomName || agent.roomId);
 }
 
 function mediaForRoom(roomId, limit = 12) {
@@ -509,7 +516,7 @@ function wallRooms() {
 
     return {
       roomId: agent.roomId,
-      roomName: agent.roomName,
+      roomName: displayRoomName(agent),
       health: current.health,
       issue: current.issue,
       changedAt: agent.healthChangedAt || agent.lastSeenIso || null,
@@ -525,7 +532,7 @@ function controlRooms(user) {
     const room = {
       agentId: agent.agentId,
       roomId: agent.roomId,
-      roomName: agent.roomName,
+      roomName: displayRoomName(agent),
       hostname: agent.hostname,
       platform: agent.platform,
       appVersion: agent.appVersion,
@@ -644,7 +651,7 @@ async function ingestAgentMedia(req, res) {
     kind,
     agentId: agent.agentId,
     roomId: agent.roomId,
-    roomName: agent.roomName,
+    roomName: displayRoomName(agent),
     fileName,
     createdAt: String(body.createdAt || nowIso()),
     sourceBytes: Number.isFinite(Number(body.sourceBytes)) ? Number(body.sourceBytes) : null,
@@ -662,6 +669,32 @@ async function ingestAgentMedia(req, res) {
   return sendJson(res, 201, { ok: true, media });
 }
 
+async function updateRoomSettings(req, res, roomId) {
+  const user = requirePermission(req, res, 'settings:manage');
+  if (!user) return;
+
+  const agent = Object.values(state.agents).find((candidate) => candidate.roomId === roomId);
+  if (!agent) return sendJson(res, 404, { error: 'Room not found.' });
+
+  const body = await readJson(req, 64 * 1024);
+  const displayName = String(body.displayName || '').trim().slice(0, 120);
+
+  state.roomSettings[roomId] = {
+    ...(state.roomSettings[roomId] || {}),
+    displayName,
+    updatedAt: nowIso(),
+    updatedBy: user.email
+  };
+  schedulePersist();
+
+  return sendJson(res, 200, {
+    ok: true,
+    roomId,
+    roomName: displayRoomName(agent),
+    settings: state.roomSettings[roomId]
+  });
+}
+
 async function ingestBusiness(req, res, roomId) {
   if (!BUSINESS_INGEST_KEY) return sendJson(res, 503, { error: 'Business ingest is not configured.' });
   const auth = String(req.headers.authorization || '');
@@ -676,7 +709,7 @@ async function ingestBusiness(req, res, roomId) {
   const numberOrNull = (value) => value === null || value === undefined || value === '' ? null : (Number.isFinite(Number(value)) ? Number(value) : null);
   const next = {
     roomId,
-    roomName: agent.roomName,
+    roomName: displayRoomName(agent),
     updatedAt: nowIso(),
     source: String(body.source || 'SB-Live-Dashboard').slice(0, 80),
     platform: String(body.platform || '').slice(0, 40),
@@ -716,7 +749,7 @@ async function removeAgent(req, res, agentId) {
   state.removedDevices.unshift({
     agentId: agent.agentId,
     roomId: agent.roomId,
-    roomName: agent.roomName,
+    roomName: displayRoomName(agent),
     hostname: agent.hostname,
     removedAt: at,
     removedBy: user.email
@@ -745,6 +778,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/agent/heartbeat') return heartbeat(req, res);
     if (req.method === 'POST' && url.pathname === '/api/agent/media') return ingestAgentMedia(req, res);
     if (req.method === 'GET' && url.pathname === '/api/wall-status') return sendJson(res, 200, { rooms: wallRooms() });
+
+    if (req.method === 'POST' && url.pathname.startsWith('/api/rooms/') && url.pathname.endsWith('/settings')) {
+      const roomId = decodeURIComponent(url.pathname.split('/')[3] || '');
+      return updateRoomSettings(req, res, roomId);
+    }
 
     if (req.method === 'POST' && url.pathname.startsWith('/api/business/rooms/')) {
       const roomId = decodeURIComponent(url.pathname.slice('/api/business/rooms/'.length));
