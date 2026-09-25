@@ -288,29 +288,52 @@ function updateStreamLivePresentation(tile, stream) {
   const next = streamTelemetryState(stream);
   const previous = tile.dataset.liveState || 'unknown';
   const view = tile.querySelector('webview');
+  const linkedRoom = Boolean(stream.roomId);
   tile.dataset.liveState = next;
 
-  // Linked Fanatics rooms are strict: never show a random/recommended stream.
-  // The room agent decides whether the room is live, then we resolve the
-  // matching live Fanatics show from the Swish shop page.
-  if (platformFor(stream) === 'Fanatics' && stream.roomId) {
-    if (next !== previous && next !== 'live') {
-      view && (view.dataset.swishFanaticsResolvedUrl = '');
-    }
-    resolveFanaticsCurrentShow(view, stream, tile).catch(() => {});
-    return;
-  }
-
-  if (next === 'off') {
-    ensureOffAirOverlay(tile, stream);
+  // Every linked room is agent-gated. If the room is not streaming, the Wall
+  // and Room View show a clean off-air state instead of stale provider content.
+  if (linkedRoom && next === 'unknown') {
+    ensureOffAirOverlay(
+      tile,
+      stream,
+      'CHECKING LIVE STATUS',
+      'Waiting for the room agent before showing this stream.'
+    );
     pauseView(view);
     return;
   }
 
-  tile.querySelector('.stream-off-air')?.remove();
+  if (linkedRoom && next === 'off') {
+    ensureOffAirOverlay(
+      tile,
+      stream,
+      'NO STREAM RIGHT NOW',
+      `${stream.name} will return here automatically when this room goes live.`
+    );
+
+    if (platformFor(stream) === 'Fanatics') {
+      view && (view.dataset.swishFanaticsResolvedUrl = '');
+      loadFanaticsShop(view);
+    }
+
+    pauseView(view);
+    return;
+  }
+
+  // Linked Fanatics rooms need one extra step while live: resolve the current
+  // matching show from the Swish Fanatics shop and block random redirects.
+  if (platformFor(stream) === 'Fanatics' && linkedRoom) {
+    resolveFanaticsCurrentShow(view, stream, tile).catch(() => {});
+    return;
+  }
 
   if (next === 'live') {
-    if (previous === 'off') {
+    tile.querySelector('.stream-off-air')?.remove();
+
+    // A provider page can be stale after an off-air period. Reload once when
+    // the room transitions back to live, then leave the webview alone.
+    if (linkedRoom && previous !== 'live') {
       try { view?.reload(); } catch (_) {}
     } else {
       resumeView(view);
@@ -318,7 +341,9 @@ function updateStreamLivePresentation(tile, stream) {
     return;
   }
 
-  // Non-Fanatics providers remain fail-open if monitoring is unavailable.
+  // Unlinked streams still behave like the legacy wall because there is no
+  // room agent to tell us whether they are actually live.
+  tile.querySelector('.stream-off-air')?.remove();
   resumeView(view);
 }
 
