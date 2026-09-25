@@ -125,6 +125,11 @@ function platformFor(stream) {
   return 'Other';
 }
 
+function userCan(permission) {
+  const permissions = Array.isArray(authUser?.permissions) ? authUser.permissions : [];
+  return permissions.includes('*') || permissions.includes(permission);
+}
+
 function activeWebviews() {
   return [...document.querySelectorAll('webview')];
 }
@@ -238,12 +243,13 @@ async function refreshWallStatuses() {
 }
 
 async function refreshControlData() {
-  if (!authToken) return;
+  if (!authToken || !userCan('rooms:view')) return;
   try {
     const [roomsData, incidentsData] = await Promise.all([
       fetchJson('/api/rooms'),
-      fetchJson('/api/incidents')
+      userCan('incidents:view') ? fetchJson('/api/incidents') : Promise.resolve({ incidents: [] })
     ]);
+    if (roomsData.user) authUser = roomsData.user;
     controlRooms = roomsData.rooms || [];
     incidents = incidentsData.incidents || [];
     wallStatuses = new Map(controlRooms.map((room) => [
@@ -275,7 +281,7 @@ function startPolling() {
   refreshWallStatuses();
   wallPollTimer = setInterval(refreshWallStatuses, 5000);
 
-  if (authToken) {
+  if (authToken && userCan('rooms:view')) {
     refreshControlData();
     controlPollTimer = setInterval(refreshControlData, 5000);
   }
@@ -299,13 +305,31 @@ function applyRoleUi() {
     els.signInBtn.classList.toggle('hidden', Boolean(authToken));
     els.profileBtn.classList.toggle('hidden', !authToken);
     els.techNav.classList.toggle('hidden', !authToken);
+
+    document.querySelectorAll('.nav-btn').forEach((button) => {
+      const page = button.dataset.page;
+      const allowed =
+        page === 'wall' ||
+        ((page === 'overview' || page === 'rooms') && userCan('rooms:view')) ||
+        (page === 'incidents' && userCan('incidents:view'));
+      button.classList.toggle('hidden', Boolean(authToken) && !allowed);
+    });
+
     if (!authToken && currentPage !== 'wall') switchPage('wall');
+    if (authToken && currentPage !== 'wall') {
+      const allowed =
+        ((currentPage === 'overview' || currentPage === 'rooms') && userCan('rooms:view')) ||
+        (currentPage === 'incidents' && userCan('incidents:view'));
+      if (!allowed) switchPage('wall');
+    }
   }
 }
 
 function switchPage(page) {
   if (!['overview', 'wall', 'rooms', 'incidents'].includes(page)) return;
   if (page !== 'wall' && !authToken) return;
+  if ((page === 'overview' || page === 'rooms') && !userCan('rooms:view')) return;
+  if (page === 'incidents' && !userCan('incidents:view')) return;
 
   currentPage = page;
   fullscreenStreamId = null;
@@ -821,12 +845,12 @@ async function signIn() {
     authToken = data.token;
     authUser = data.user;
     els.profileBtn.textContent = (authUser?.name || authUser?.email || 'U').trim().charAt(0).toUpperCase();
-    els.profileBtn.title = `${authUser?.name || authUser?.email || 'Control user'} — click to sign out`;
+    els.profileBtn.title = `${authUser?.name || authUser?.email || 'Control user'} · ${authUser?.role || 'user'} — click to sign out`;
     closeLogin();
     applyRoleUi();
     startPolling();
     await refreshControlData();
-    switchPage('overview');
+    switchPage(userCan('rooms:view') ? 'overview' : 'wall');
   } catch (err) {
     els.loginError.textContent = err.message;
     els.loginError.classList.remove('hidden');
