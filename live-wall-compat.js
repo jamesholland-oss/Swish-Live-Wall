@@ -513,10 +513,21 @@ renderCurrentPage = function renderCurrentPageCompat() {
     return;
   }
 
-  if (currentPage !== 'rooms') restorePortaledWallStream();
+  if (currentPage === 'rooms') {
+    // Mount the selected Live Wall webview into the Room View first, while it
+    // is still actively playing. Only pause the remaining wall feeds after the
+    // selected feed has been portaled. This avoids the visible pause/rebuffer
+    // that made room switching feel slow.
+    renderRooms();
+    wallViews().forEach(pauseView);
+    const activeRoomView = liveWallCompatState.roomPortal?.frame?.querySelector('webview');
+    if (activeRoomView) resumeView(activeRoomView);
+    return;
+  }
+
+  restorePortaledWallStream();
   wallViews().forEach(pauseView);
 
   if (currentPage === 'overview') renderOverview();
-  if (currentPage === 'rooms') renderRooms();
   if (currentPage === 'incidents') renderIncidents();
 };
