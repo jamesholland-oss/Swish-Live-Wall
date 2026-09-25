@@ -379,12 +379,34 @@ function maybeSample(agent) {
 function wallRooms() {
   return Object.values(state.agents).map((agent) => {
     const current = healthFor(agent);
+    const metrics = agent.metrics || {};
+    const agentOnline = Boolean(agent.lastSeen) && Date.now() - Number(agent.lastSeen) <= OFFLINE_AFTER_MS;
+
+    // Only publish a live/off-air decision when the room agent gives us a
+    // trustworthy OBS state. If the agent or OBS WebSocket is unavailable,
+    // leave the stream state unknown so the wall never hides a potentially
+    // live provider page because of stale telemetry.
+    let streamingActive = null;
+    if (agentOnline && metrics.obsRunning === false) {
+      streamingActive = false;
+    } else if (
+      agentOnline &&
+      metrics.obsRunning === true &&
+      metrics.obsWebSocketReachable === true &&
+      metrics.obsWebSocketAuthenticated === true &&
+      typeof metrics.streamingActive === 'boolean'
+    ) {
+      streamingActive = metrics.streamingActive;
+    }
+
     return {
       roomId: agent.roomId,
       roomName: agent.roomName,
       health: current.health,
       issue: current.issue,
-      changedAt: agent.healthChangedAt || agent.lastSeenIso || null
+      changedAt: agent.healthChangedAt || agent.lastSeenIso || null,
+      agentOnline,
+      streamingActive
     };
   }).sort((a, b) => a.roomName.localeCompare(b.roomName));
 }
