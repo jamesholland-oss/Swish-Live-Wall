@@ -448,9 +448,18 @@ function maybeSample(agent) {
   state.samples[agent.agentId] = samples;
 }
 
+function legacyRoomDisplayName(agent) {
+  const raw = String(agent?.roomName || '').trim();
+  const normalized = raw.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+  if (normalized === 'sandbox' || normalized === 'sandbox agent') return 'SWISH WAX';
+  if (normalized === 'swish wax') return 'SWISH HITS';
+  return raw;
+}
+
 function displayRoomName(agent) {
   const configured = state.roomSettings?.[agent.roomId]?.displayName;
-  return String(configured || agent.roomName || agent.roomId);
+  return String(configured || legacyRoomDisplayName(agent) || agent.roomId);
 }
 
 function mediaForRoom(roomId, limit = 12) {
