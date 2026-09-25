@@ -9,6 +9,8 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
 const SLACK_WEBHOOK_URL = String(process.env.SLACK_WEBHOOK_URL || '');
+const SLACK_CLIP_WEBHOOK_URL = String(process.env.SLACK_CLIP_WEBHOOK_URL || '');
+const BUSINESS_INGEST_KEY = String(process.env.BUSINESS_INGEST_KEY || '');
 const SESSION_HOURS = Math.max(1, Number(process.env.CONTROL_SESSION_HOURS || 12));
 const OFFLINE_AFTER_MS = Math.max(15000, Number(process.env.OFFLINE_AFTER_MS || 30000));
 const SAMPLE_INTERVAL_MS = Math.max(60000, Number(process.env.SAMPLE_INTERVAL_MS || 300000));
@@ -27,7 +29,15 @@ function safeEqual(a, b) {
 }
 
 function blankState() {
-  return { version: 2, agents: {}, incidents: [], samples: {}, removedDevices: [] };
+  return {
+    version: 3,
+    agents: {},
+    incidents: [],
+    samples: {},
+    removedDevices: [],
+    media: [],
+    business: {}
+  };
 }
 
 function loadState() {
@@ -40,7 +50,9 @@ function loadState() {
       agents: saved.agents || {},
       incidents: Array.isArray(saved.incidents) ? saved.incidents : [],
       samples: saved.samples || {},
-      removedDevices: Array.isArray(saved.removedDevices) ? saved.removedDevices : []
+      removedDevices: Array.isArray(saved.removedDevices) ? saved.removedDevices : [],
+      media: Array.isArray(saved.media) ? saved.media : [],
+      business: saved.business && typeof saved.business === 'object' ? saved.business : {}
     };
   } catch (_) {
     return blankState();
@@ -64,14 +76,70 @@ function schedulePersist() {
   }, 250);
 }
 
+const ROLE_PERMISSIONS = {
+  super_admin: ['*'],
+  admin: [
+    'wall:view', 'rooms:view', 'technical:view', 'incidents:view',
+    'diagnostics:request', 'clips:view', 'sales:view', 'sales:reports',
+    'users:manage', 'settings:manage'
+  ],
+  business: ['wall:view', 'rooms:view', 'clips:view', 'sales:view', 'sales:reports'],
+  ops: ['wall:view', 'rooms:view', 'technical:view', 'incidents:view', 'diagnostics:request', 'clips:view'],
+  viewer: ['wall:view', 'rooms:view'],
+  wall_only: ['wall:view']
+};
+
+function normalizeRole(value) {
+  const role = String(value || '').trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(ROLE_PERMISSIONS, role) ? role : 'admin';
+}
+
+function permissionsForRole(role, extra = []) {
+  const base = ROLE_PERMISSIONS[normalizeRole(role)] || [];
+  if (base.includes('*')) return ['*'];
+  return [...new Set([...base, ...(Array.isArray(extra) ? extra.map(String) : [])])];
+}
+
+function hasPermission(user, permission) {
+  const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
+  return permissions.includes('*') || permissions.includes(permission);
+}
+
+function requirePermission(req, res, permission) {
+  const user = authUser(req);
+  if (!user) {
+    sendJson(res, 401, { error: 'Authentication required.' });
+    return null;
+  }
+  if (!hasPermission(user, permission)) {
+    sendJson(res, 403, { error: 'You do not have access to this resource.' });
+    return null;
+  }
+  return user;
+}
+
+function publicUser(user) {
+  return {
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    permissions: user.permissions
+  };
+}
+
 function parseUsers() {
   try {
     const users = JSON.parse(String(process.env.CONTROL_USERS_JSON || '[]'));
-    return Array.isArray(users) ? users.map((user) => ({
-      email: String(user.email || '').trim().toLowerCase(),
-      password: String(user.password || ''),
-      name: String(user.name || user.email || '').trim()
-    })).filter((user) => user.email && user.password) : [];
+    return Array.isArray(users) ? users.map((user) => {
+      const role = normalizeRole(user.role);
+      return {
+        email: String(user.email || '').trim().toLowerCase(),
+        password: String(user.password || ''),
+        name: String(user.name || user.email || '').trim(),
+        role,
+        permissions: permissionsForRole(role, user.permissions)
+      };
+    }).filter((user) => user.email && user.password) : [];
   } catch (err) {
     console.error('CONTROL_USERS_JSON invalid:', err.message);
     return [];
@@ -122,6 +190,8 @@ function createSession(user) {
   sessions.set(token, {
     email: user.email,
     name: user.name,
+    role: user.role,
+    permissions: user.permissions,
     expiresAt: Date.now() + SESSION_HOURS * 3600000
   });
   return token;
@@ -376,6 +446,44 @@ function maybeSample(agent) {
   state.samples[agent.agentId] = samples;
 }
 
+function mediaForRoom(roomId, limit = 12) {
+  const safeLimit = Math.max(1, Math.min(100, Number(limit) || 12));
+  return state.media
+    .filter((item) => item.roomId === roomId)
+    .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0))
+    .slice(0, safeLimit);
+}
+
+function businessForRoom(roomId) {
+  const value = state.business?.[roomId];
+  return value && typeof value === 'object' ? value : null;
+}
+
+async function sendClipSlack(media) {
+  if (!SLACK_CLIP_WEBHOOK_URL || media.kind !== 'clip') return;
+  const shadeLine = media.shadeVerified
+    ? 'Shade: Saved ✓'
+    : media.shadeAttempted
+      ? `Shade: Not confirmed ⚠`
+      : 'Shade: Not attempted';
+  const text = [
+    `${media.roomName} — Clip Created`,
+    media.fileName,
+    `Local save: ${media.localSaved ? '✓' : '⚠'}`,
+    shadeLine
+  ].join('\n');
+  try {
+    const response = await fetch(SLACK_CLIP_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    if (!response.ok) console.error(`Slack clip alert failed: HTTP ${response.status}`);
+  } catch (err) {
+    console.error('Slack clip alert failed:', err.message);
+  }
+}
+
 function wallRooms() {
   return Object.values(state.agents).map((agent) => {
     const current = healthFor(agent);
@@ -411,10 +519,10 @@ function wallRooms() {
   }).sort((a, b) => a.roomName.localeCompare(b.roomName));
 }
 
-function controlRooms() {
+function controlRooms(user) {
   return Object.values(state.agents).map((agent) => {
     const current = healthFor(agent);
-    return {
+    const room = {
       agentId: agent.agentId,
       roomId: agent.roomId,
       roomName: agent.roomName,
@@ -427,9 +535,14 @@ function controlRooms() {
       health: current.health,
       issue: current.issue,
       healthChangedAt: agent.healthChangedAt || null,
-      metrics: agent.metrics || {},
       capabilities: agent.capabilities || []
     };
+
+    if (hasPermission(user, 'technical:view')) room.metrics = agent.metrics || {};
+    if (hasPermission(user, 'sales:view')) room.business = businessForRoom(agent.roomId);
+    if (hasPermission(user, 'clips:view')) room.clips = mediaForRoom(agent.roomId, 8);
+
+    return room;
   }).sort((a, b) => a.roomName.localeCompare(b.roomName));
 }
 
@@ -441,7 +554,7 @@ async function login(req, res) {
   const user = users.find((candidate) => candidate.email === email);
   if (!user || !safeEqual(user.password, password)) return sendJson(res, 401, { error: 'Invalid email or password.' });
   const token = createSession(user);
-  return sendJson(res, 200, { token, expiresInSeconds: SESSION_HOURS * 3600, user: { email: user.email, name: user.name } });
+  return sendJson(res, 200, { token, expiresInSeconds: SESSION_HOURS * 3600, user: publicUser(user) });
 }
 
 async function enroll(req, res) {
@@ -511,6 +624,76 @@ async function heartbeat(req, res) {
   return sendJson(res, 200, { ok: true, health: agent.health, commands: [] });
 }
 
+async function ingestAgentMedia(req, res) {
+  const agent = agentByToken(req);
+  if (!agent) return sendJson(res, 401, { error: 'Invalid agent credentials.' });
+
+  const body = await readJson(req, 256 * 1024);
+  const kind = body.kind === 'vod' ? 'vod' : body.kind === 'clip' ? 'clip' : '';
+  if (!kind) return sendJson(res, 400, { error: 'kind must be clip or vod.' });
+
+  const fileName = path.basename(String(body.fileName || '').trim());
+  if (!fileName) return sendJson(res, 400, { error: 'fileName is required.' });
+
+  const id = String(body.eventId || crypto.randomUUID());
+  const existing = state.media.find((item) => item.id === id);
+  if (existing) return sendJson(res, 200, { ok: true, media: existing, duplicate: true });
+
+  const media = {
+    id,
+    kind,
+    agentId: agent.agentId,
+    roomId: agent.roomId,
+    roomName: agent.roomName,
+    fileName,
+    createdAt: String(body.createdAt || nowIso()),
+    sourceBytes: Number.isFinite(Number(body.sourceBytes)) ? Number(body.sourceBytes) : null,
+    localSaved: body.localSaved !== false,
+    shadeAttempted: Boolean(body.shadeAttempted),
+    shadeVerified: Boolean(body.shadeVerified),
+    shadePath: body.shadePath ? String(body.shadePath) : '',
+    error: body.error ? String(body.error).slice(0, 500) : ''
+  };
+
+  state.media.unshift(media);
+  if (state.media.length > 10000) state.media.length = 10000;
+  schedulePersist();
+  sendClipSlack(media);
+  return sendJson(res, 201, { ok: true, media });
+}
+
+async function ingestBusiness(req, res, roomId) {
+  if (!BUSINESS_INGEST_KEY) return sendJson(res, 503, { error: 'Business ingest is not configured.' });
+  const auth = String(req.headers.authorization || '');
+  if (!auth.startsWith('Bearer ') || !safeEqual(auth.slice(7).trim(), BUSINESS_INGEST_KEY)) {
+    return sendJson(res, 401, { error: 'Invalid business ingest key.' });
+  }
+
+  const agent = Object.values(state.agents).find((candidate) => candidate.roomId === roomId);
+  if (!agent) return sendJson(res, 404, { error: 'Room not found.' });
+
+  const body = await readJson(req, 256 * 1024);
+  const numberOrNull = (value) => value === null || value === undefined || value === '' ? null : (Number.isFinite(Number(value)) ? Number(value) : null);
+  const next = {
+    roomId,
+    roomName: agent.roomName,
+    updatedAt: nowIso(),
+    source: String(body.source || 'SB-Live-Dashboard').slice(0, 80),
+    platform: String(body.platform || '').slice(0, 40),
+    live: typeof body.live === 'boolean' ? body.live : null,
+    viewers: numberOrNull(body.viewers),
+    peakViewers: numberOrNull(body.peakViewers),
+    revenue: numberOrNull(body.revenue),
+    orders: numberOrNull(body.orders),
+    aov: numberOrNull(body.aov),
+    currentBreak: String(body.currentBreak || '').slice(0, 240)
+  };
+
+  state.business[roomId] = next;
+  schedulePersist();
+  return sendJson(res, 200, { ok: true, business: next });
+}
+
 async function removeAgent(req, res, agentId) {
   const user = authUser(req);
   if (!user) return sendJson(res, 401, { error: 'Authentication required.' });
@@ -560,18 +743,44 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/login') return login(req, res);
     if (req.method === 'POST' && url.pathname === '/api/agent/enroll') return enroll(req, res);
     if (req.method === 'POST' && url.pathname === '/api/agent/heartbeat') return heartbeat(req, res);
+    if (req.method === 'POST' && url.pathname === '/api/agent/media') return ingestAgentMedia(req, res);
     if (req.method === 'GET' && url.pathname === '/api/wall-status') return sendJson(res, 200, { rooms: wallRooms() });
 
+    if (req.method === 'POST' && url.pathname.startsWith('/api/business/rooms/')) {
+      const roomId = decodeURIComponent(url.pathname.slice('/api/business/rooms/'.length));
+      return ingestBusiness(req, res, roomId);
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/me') {
+      const user = requirePermission(req, res, 'technical:view');
+      if (!user) return;
+      return sendJson(res, 200, { user: publicUser(user) });
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/rooms') {
-      const user = authUser(req);
-      if (!user) return sendJson(res, 401, { error: 'Authentication required.' });
-      return sendJson(res, 200, { rooms: controlRooms(), user });
+      const user = requirePermission(req, res, 'rooms:view');
+      if (!user) return;
+      return sendJson(res, 200, { rooms: controlRooms(user), user: publicUser(user) });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/incidents') {
-      const user = authUser(req);
-      if (!user) return sendJson(res, 401, { error: 'Authentication required.' });
+      const user = requirePermission(req, res, 'incidents:view');
+      if (!user) return;
       return sendJson(res, 200, { incidents: state.incidents.slice(0, 5000) });
+    }
+
+    if (req.method === 'GET' && url.pathname.startsWith('/api/rooms/') && url.pathname.endsWith('/media')) {
+      const user = requirePermission(req, res, 'clips:view');
+      if (!user) return;
+      const roomId = decodeURIComponent(url.pathname.split('/')[3] || '');
+      return sendJson(res, 200, { roomId, media: mediaForRoom(roomId, Number(url.searchParams.get('limit') || 50)) });
+    }
+
+    if (req.method === 'GET' && url.pathname.startsWith('/api/rooms/') && url.pathname.endsWith('/business')) {
+      const user = requirePermission(req, res, 'sales:view');
+      if (!user) return;
+      const roomId = decodeURIComponent(url.pathname.split('/')[3] || '');
+      return sendJson(res, 200, { roomId, business: businessForRoom(roomId) });
     }
 
     if (req.method === 'GET' && url.pathname.startsWith('/api/rooms/') && url.pathname.endsWith('/samples')) {
