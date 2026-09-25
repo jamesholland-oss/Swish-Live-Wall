@@ -485,6 +485,81 @@ function businessForRoom(roomId) {
   return value && typeof value === 'object' ? value : null;
 }
 
+function normalizeBusinessName(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function resolveBusinessAgent(streamName, platform) {
+  const p = normalizeBusinessName(platform);
+  const n = normalizeBusinessName(streamName);
+
+  const desiredRoomName = (() => {
+    if (p === 'fanatics') {
+      if (n === 'swish wax') return 'SWISH WAX';
+      if (n === 'swish bats') return 'SWISH BATS';
+      if (n === 'swish main' || n === 'swish breaks') return 'SWISH BREAKS FN';
+    }
+
+    if (p === 'whatnot') {
+      if (n === 'swish breaks') return 'SWISH BREAKS WN';
+      if (n === 'swish hits') return 'SWISH HITS';
+      if (n === 'swish smash') return 'SWISH SMASH';
+      if (n === 'pokeswish' || n === 'poke swish') return 'POKE SWISH';
+    }
+
+    if (p === 'tiktok') {
+      if (n === 'tiktok main' || n === 'swish breaks') return 'SWISH BREAKS TT';
+      if (n === 'tiktok poke' || n === 'pokeswish' || n === 'swish poke') return 'SWISH POKE TT';
+      if (n === 'tiktok rips' || n === 'swish rips') return 'SWISH RIPS';
+    }
+
+    return '';
+  })();
+
+  if (!desiredRoomName) return null;
+  const target = normalizeBusinessName(desiredRoomName);
+
+  return Object.values(state.agents).find((agent) =>
+    normalizeBusinessName(displayRoomName(agent)) === target
+  ) || null;
+}
+
+function businessIngestAuthorized(req) {
+  if (!BUSINESS_INGEST_KEY) return false;
+  const auth = String(req.headers.authorization || '');
+  return auth.startsWith('Bearer ') && safeEqual(auth.slice(7).trim(), BUSINESS_INGEST_KEY);
+}
+
+function storeBusinessSnapshot(agent, body = {}) {
+  const numberOrNull = (value) =>
+    value === null || value === undefined || value === ''
+      ? null
+      : (Number.isFinite(Number(value)) ? Number(value) : null);
+
+  const next = {
+    roomId: agent.roomId,
+    roomName: displayRoomName(agent),
+    updatedAt: nowIso(),
+    source: String(body.source || 'SB-Live-Dashboard').slice(0, 80),
+    sourceStreamName: String(body.streamName || body.sourceStreamName || '').slice(0, 120),
+    platform: String(body.platform || '').slice(0, 40),
+    live: typeof body.live === 'boolean' ? body.live : null,
+    viewers: numberOrNull(body.viewers),
+    peakViewers: numberOrNull(body.peakViewers),
+    revenue: numberOrNull(body.revenue),
+    orders: numberOrNull(body.orders),
+    aov: numberOrNull(body.aov),
+    currentBreak: String(body.currentBreak || '').slice(0, 240),
+    streamTitle: String(body.streamTitle || '').slice(0, 240),
+    windowStart: body.windowStart ? String(body.windowStart).slice(0, 80) : '',
+    windowEnd: body.windowEnd ? String(body.windowEnd).slice(0, 80) : ''
+  };
+
+  state.business[agent.roomId] = next;
+  schedulePersist();
+  return next;
+}
+
 async function sendClipSlack(media) {
   if (!SLACK_CLIP_WEBHOOK_URL || media.kind !== 'clip') return;
   const shadeLine = media.shadeVerified
@@ -716,34 +791,43 @@ async function updateRoomSettings(req, res, roomId) {
 
 async function ingestBusiness(req, res, roomId) {
   if (!BUSINESS_INGEST_KEY) return sendJson(res, 503, { error: 'Business ingest is not configured.' });
-  const auth = String(req.headers.authorization || '');
-  if (!auth.startsWith('Bearer ') || !safeEqual(auth.slice(7).trim(), BUSINESS_INGEST_KEY)) {
-    return sendJson(res, 401, { error: 'Invalid business ingest key.' });
-  }
+  if (!businessIngestAuthorized(req)) return sendJson(res, 401, { error: 'Invalid business ingest key.' });
 
   const agent = Object.values(state.agents).find((candidate) => candidate.roomId === roomId);
   if (!agent) return sendJson(res, 404, { error: 'Room not found.' });
 
   const body = await readJson(req, 256 * 1024);
-  const numberOrNull = (value) => value === null || value === undefined || value === '' ? null : (Number.isFinite(Number(value)) ? Number(value) : null);
-  const next = {
-    roomId,
-    roomName: displayRoomName(agent),
-    updatedAt: nowIso(),
-    source: String(body.source || 'SB-Live-Dashboard').slice(0, 80),
-    platform: String(body.platform || '').slice(0, 40),
-    live: typeof body.live === 'boolean' ? body.live : null,
-    viewers: numberOrNull(body.viewers),
-    peakViewers: numberOrNull(body.peakViewers),
-    revenue: numberOrNull(body.revenue),
-    orders: numberOrNull(body.orders),
-    aov: numberOrNull(body.aov),
-    currentBreak: String(body.currentBreak || '').slice(0, 240)
-  };
+  const business = storeBusinessSnapshot(agent, body);
+  return sendJson(res, 200, { ok: true, business });
+}
 
-  state.business[roomId] = next;
-  schedulePersist();
-  return sendJson(res, 200, { ok: true, business: next });
+async function ingestBusinessByChannel(req, res) {
+  if (!BUSINESS_INGEST_KEY) return sendJson(res, 503, { error: 'Business ingest is not configured.' });
+  if (!businessIngestAuthorized(req)) return sendJson(res, 401, { error: 'Invalid business ingest key.' });
+
+  const body = await readJson(req, 256 * 1024);
+  const streamName = String(body.streamName || '').trim();
+  const platform = String(body.platform || '').trim().toLowerCase();
+  if (!streamName || !platform) {
+    return sendJson(res, 400, { error: 'streamName and platform are required.' });
+  }
+
+  const agent = resolveBusinessAgent(streamName, platform);
+  if (!agent) {
+    return sendJson(res, 404, {
+      error: 'No monitored room is mapped to this business stream.',
+      streamName,
+      platform
+    });
+  }
+
+  const business = storeBusinessSnapshot(agent, body);
+  return sendJson(res, 200, {
+    ok: true,
+    roomId: agent.roomId,
+    roomName: displayRoomName(agent),
+    business
+  });
 }
 
 async function removeAgent(req, res, agentId) {
@@ -801,6 +885,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname.startsWith('/api/rooms/') && url.pathname.endsWith('/settings')) {
       const roomId = decodeURIComponent(url.pathname.split('/')[3] || '');
       return updateRoomSettings(req, res, roomId);
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/business/ingest') {
+      return ingestBusinessByChannel(req, res);
     }
 
     if (req.method === 'POST' && url.pathname.startsWith('/api/business/rooms/')) {
