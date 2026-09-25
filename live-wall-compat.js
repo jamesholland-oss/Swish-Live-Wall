@@ -9,7 +9,8 @@
 const liveWallCompatState = {
   configSignature: '',
   exitButton: null,
-  audioMutedByStream: new Map()
+  audioMutedByStream: new Map(),
+  roomPortal: null
 };
 
 function wallConfigSignature() {
@@ -26,6 +27,62 @@ function wallConfigSignature() {
 
 function wallViews() {
   return [...els.wallGrid.querySelectorAll('.stream-tile webview')];
+}
+
+function restorePortaledWallStream() {
+  const portal = liveWallCompatState.roomPortal;
+  if (!portal) return;
+
+  const { frame, placeholder } = portal;
+  try {
+    frame.classList.remove('room-phone-frame', 'room-linked-wall-frame');
+    delete frame.dataset.platform;
+    if (placeholder?.parentNode) {
+      placeholder.parentNode.insertBefore(frame, placeholder);
+      placeholder.remove();
+    }
+  } catch (_) {}
+
+  liveWallCompatState.roomPortal = null;
+  if (currentPage === 'wall') resumeView(frame.querySelector('webview'));
+}
+
+function mountLinkedWallStreamInRoom(stream, stage) {
+  if (!stream?.id || !stage) return false;
+
+  const current = liveWallCompatState.roomPortal;
+  if (current?.streamId === stream.id && current.frame?.isConnected) {
+    if (current.frame.parentNode !== stage) stage.append(current.frame);
+    current.frame.classList.add('room-phone-frame', 'room-linked-wall-frame');
+    current.frame.dataset.platform = platformFor(stream);
+    resumeView(current.frame.querySelector('webview'));
+    return true;
+  }
+
+  restorePortaledWallStream();
+
+  const tile = els.wallGrid.querySelector(
+    `.stream-tile[data-stream-id="${CSS.escape(stream.id)}"]`
+  );
+  const frame = tile?.querySelector('.phone-frame');
+  const originalStage = frame?.parentNode;
+  if (!frame || !originalStage) return false;
+
+  const placeholder = document.createComment(`swish-room-portal:${stream.id}`);
+  originalStage.insertBefore(placeholder, frame);
+
+  frame.classList.add('room-phone-frame', 'room-linked-wall-frame');
+  frame.dataset.platform = platformFor(stream);
+  stage.append(frame);
+
+  liveWallCompatState.roomPortal = {
+    streamId: stream.id,
+    frame,
+    placeholder
+  };
+
+  resumeView(frame.querySelector('webview'));
+  return true;
 }
 
 function streamMuted(streamId) {
@@ -317,6 +374,7 @@ renderWall = function renderWallCompat() {
   const alreadyBuilt = els.wallGrid.querySelectorAll('.stream-tile').length > 0;
 
   if (!alreadyBuilt || signature !== liveWallCompatState.configSignature) {
+    restorePortaledWallStream();
     exitCompatFullscreen(false);
     els.wallGrid.innerHTML = '';
     streams.forEach((stream) => els.wallGrid.append(buildLegacyWallTile(stream)));
@@ -448,12 +506,14 @@ toggleFullscreen = function toggleFullscreenCompat(streamId) {
 // visible. Returning to Live Wall resumes the same webviews and page sessions.
 renderCurrentPage = function renderCurrentPageCompat() {
   if (currentPage === 'wall') {
+    restorePortaledWallStream();
     renderFilters();
     renderWall();
     wallViews().forEach(resumeView);
     return;
   }
 
+  if (currentPage !== 'rooms') restorePortaledWallStream();
   wallViews().forEach(pauseView);
 
   if (currentPage === 'overview') renderOverview();
