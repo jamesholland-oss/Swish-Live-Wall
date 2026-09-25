@@ -731,5 +731,6 @@ renderCurrentPage = function renderCurrentPageCompat() {
   wallViews().forEach(pauseView);
 
   if (currentPage === 'overview') renderOverview();
+  if (currentPage === 'reports' && typeof renderReports === 'function') renderReports();
   if (currentPage === 'incidents') renderIncidents();
 };
