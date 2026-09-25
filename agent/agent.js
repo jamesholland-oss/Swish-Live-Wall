@@ -401,6 +401,25 @@ async function buildDiagnosticsBundle(stateDir, hours = 24) {
   return { archivePath, files: budget.files, bytes: budget.bytes, hours: safeHours };
 }
 
+function canonicalAgentRoomName(value) {
+  const raw = String(value || '').trim();
+  const normalized = raw.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+  if (
+    normalized === 'sandbox' ||
+    normalized === 'sandbox agent' ||
+    normalized === 'the sandbox'
+  ) return 'SWISH WAX';
+
+  if (
+    normalized === 'swish wax' ||
+    normalized === 'swish wax fn' ||
+    normalized === 'swish wax agent'
+  ) return 'SWISH HITS';
+
+  return raw;
+}
+
 function startAgent(options = {}) {
   const serverUrl = normalizeServerUrl(options.serverUrl || process.env.SWISH_CONTROL_URL);
   const roomName = String(options.roomName || process.env.SWISH_ROOM_NAME || os.hostname()).trim();
