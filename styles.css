@@ -70,9 +70,11 @@ button:focus-visible, input:focus, select:focus { border-color: #607086 !importa
 .stream-tile[data-platform="Whatnot"] .phone-frame,
 .stream-tile[data-platform="Fanatics"] .phone-frame { width: min(100%, 540px); height: 100%; aspect-ratio: auto; }
 .stream-tile[data-platform="Fanatics"] .phone-frame webview {
-  width: 125%;
-  min-width: 125%;
-  margin-left: -25%;
+  position: relative;
+  left: -45%;
+  width: 145%;
+  min-width: 145%;
+  max-width: none;
 }
 .stream-tile[data-platform="TikTok"] .phone-stage { gap: 8px; padding-inline: 8px; }
 .stream-tile[data-platform="TikTok"] .phone-frame { flex: 0 1 auto; }
