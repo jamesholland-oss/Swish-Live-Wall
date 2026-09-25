@@ -64,6 +64,64 @@ function setStreamMuted(streamId, muted) {
   updateAudioButton(tile, Boolean(muted));
 }
 
+function streamTelemetryState(stream) {
+  if (!stream?.roomId) return 'unknown';
+  const status = statusForRoom(stream.roomId);
+  if (status?.streamingActive === true) return 'live';
+  if (status?.streamingActive === false) return 'off';
+  return 'unknown';
+}
+
+function ensureOffAirOverlay(tile, stream) {
+  let overlay = tile?.querySelector('.stream-off-air');
+  if (overlay) return overlay;
+
+  const stage = tile?.querySelector('.phone-stage');
+  if (!stage) return null;
+
+  overlay = document.createElement('div');
+  overlay.className = 'stream-off-air';
+  overlay.innerHTML = `
+    <div class="stream-off-air-inner">
+      <div class="stream-off-air-kicker">SWISH CONTROL</div>
+      <div class="stream-off-air-title">NO STREAM RIGHT NOW</div>
+      <div class="stream-off-air-subtitle">${escapeHtml(stream.name)} will return here automatically when OBS goes live.</div>
+    </div>
+  `;
+  stage.append(overlay);
+  return overlay;
+}
+
+function updateStreamLivePresentation(tile, stream) {
+  if (!tile || !stream) return;
+  const next = streamTelemetryState(stream);
+  const previous = tile.dataset.liveState || 'unknown';
+  const view = tile.querySelector('webview');
+  tile.dataset.liveState = next;
+
+  if (next === 'off') {
+    ensureOffAirOverlay(tile, stream);
+    pauseView(view);
+    return;
+  }
+
+  tile.querySelector('.stream-off-air')?.remove();
+
+  if (next === 'live') {
+    // If OBS has just gone live again, reload the provider page once so it
+    // reconnects to the current live show instead of staying on an ended page.
+    if (previous === 'off') {
+      try { view?.reload(); } catch (_) {}
+    } else {
+      resumeView(view);
+    }
+    return;
+  }
+
+  // Unknown telemetry must never hide a provider page.
+  resumeView(view);
+}
+
 function createLegacyStreamWebview(stream) {
   const url = safeUrl(stream.url);
   if (!url) return null;
@@ -179,6 +237,7 @@ function buildLegacyWallTile(stream) {
     tile.append(issue);
   }
 
+  updateStreamLivePresentation(tile, stream);
   return tile;
 }
 
@@ -249,6 +308,8 @@ updateWallStatusDecorations = function updateWallStatusCompat() {
 
     const dot = tile.querySelector('.status-dot');
     if (dot) dot.className = `status-dot ${status.health}`;
+
+    updateStreamLivePresentation(tile, stream);
 
     tile.querySelector('.wall-issue')?.remove();
     if (['warning', 'critical', 'offline'].includes(status.health) && status.issue) {
