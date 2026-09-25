@@ -629,9 +629,18 @@ function updateRoomDetailValues(room) {
 function renderRoomDetail(force = false) {
   const room = controlRooms.find((candidate) => candidate.roomId === selectedRoomId);
   if (!room) {
+    if (typeof restorePortaledWallStream === 'function') restorePortaledWallStream();
     els.roomDetail.dataset.roomId = '';
     els.roomDetail.innerHTML = '<div class="empty-state">Select a room.</div>';
     return;
+  }
+
+  if (
+    els.roomDetail.dataset.roomId &&
+    els.roomDetail.dataset.roomId !== room.roomId &&
+    typeof restorePortaledWallStream === 'function'
+  ) {
+    restorePortaledWallStream();
   }
 
   if (!force && els.roomDetail.dataset.roomId === room.roomId && els.roomDetail.querySelector('#roomVideoStage')) {
@@ -680,12 +689,19 @@ function renderRoomDetail(force = false) {
     return;
   }
 
-  const frame = document.createElement('div');
-  frame.className = 'room-phone-frame';
-  const view = createStreamWebview(matchingStream);
-  if (view) {
-    frame.append(view);
-    stage.append(frame);
+  const reusedWallFeed =
+    typeof mountLinkedWallStreamInRoom === 'function' &&
+    mountLinkedWallStreamInRoom(matchingStream, stage);
+
+  if (!reusedWallFeed) {
+    const frame = document.createElement('div');
+    frame.className = 'room-phone-frame';
+    frame.dataset.platform = platformFor(matchingStream);
+    const view = createStreamWebview(matchingStream);
+    if (view) {
+      frame.append(view);
+      stage.append(frame);
+    }
   }
 }
 
