@@ -135,16 +135,9 @@ function buildLegacyWallTile(stream) {
     tile.querySelector('webview')?.reload();
   });
 
-  const focus = document.createElement('button');
-  focus.className = 'micro-btn';
-  focus.textContent = '⛶';
-  focus.title = 'Enlarge this stream';
-  focus.addEventListener('click', (event) => {
-    event.stopPropagation();
-    toggleFullscreen(stream.id);
-  });
-
-  controls.append(audio, refresh, focus);
+  // Standard wall only for now: keep the controls minimal and avoid
+  // switching into a separate focus layout.
+  controls.append(audio, refresh);
   header.append(identity, controls);
   tile.append(header);
 
