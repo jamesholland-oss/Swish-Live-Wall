@@ -186,6 +186,123 @@ function renderProductionHealth(room) {
   section.innerHTML = html;
 }
 
+function formatBusinessNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toLocaleString() : '—';
+}
+
+function formatBusinessMoney(value) {
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? number.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+    : '—';
+}
+
+function renderBusinessPanel(room) {
+  let section = els.roomDetail.querySelector('.business-panel');
+  if (!userCan('sales:view')) {
+    section?.remove();
+    return;
+  }
+
+  const business = room.business || null;
+  if (!section) {
+    section = document.createElement('section');
+    section.className = 'business-panel';
+  }
+
+  section.innerHTML = `
+    <div class="room-panel-head">
+      <span>LIVE BUSINESS</span>
+      <small>${business?.updatedAt ? `Updated ${escapeHtml(new Date(business.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}` : 'Waiting for data'}</small>
+    </div>
+    <div class="business-grid">
+      <div class="business-stat"><span>Viewers</span><strong>${formatBusinessNumber(business?.viewers)}</strong></div>
+      <div class="business-stat"><span>Peak</span><strong>${formatBusinessNumber(business?.peakViewers)}</strong></div>
+      <div class="business-stat"><span>Sales</span><strong>${formatBusinessMoney(business?.revenue)}</strong></div>
+      <div class="business-stat"><span>Orders</span><strong>${formatBusinessNumber(business?.orders)}</strong></div>
+      <div class="business-stat"><span>AOV</span><strong>${formatBusinessMoney(business?.aov)}</strong></div>
+      <div class="business-stat"><span>Platform</span><strong>${escapeHtml(business?.platform || '—')}</strong></div>
+    </div>
+    <div class="business-break">
+      <span>Current Break</span>
+      <strong>${escapeHtml(business?.currentBreak || '—')}</strong>
+    </div>
+  `;
+
+  if (!section.isConnected) els.roomDetail.append(section);
+}
+
+function renderRecentMedia(room) {
+  let section = els.roomDetail.querySelector('.recent-media');
+  if (!userCan('clips:view')) {
+    section?.remove();
+    return;
+  }
+
+  const clips = Array.isArray(room.clips)
+    ? room.clips.filter((item) => item.kind === 'clip').slice(0, 8)
+    : [];
+
+  if (!section) {
+    section = document.createElement('section');
+    section.className = 'recent-media';
+  }
+
+  section.innerHTML = `
+    <div class="room-panel-head">
+      <span>RECENT CLIPS</span>
+      <small>${clips.length ? `${clips.length} shown` : 'No clips reported yet'}</small>
+    </div>
+    <div class="recent-media-list">
+      ${clips.length ? clips.map((clip) => `
+        <div class="recent-media-row">
+          <div>
+            <strong>${escapeHtml(clip.fileName || 'Replay')}</strong>
+            <span>${escapeHtml(formatDateTime(clip.createdAt))}</span>
+          </div>
+          <div class="media-status ${clip.shadeVerified ? 'ok' : 'warn'}">
+            ${clip.shadeVerified ? 'SHADE ✓' : clip.shadeAttempted ? 'SHADE ⚠' : 'LOCAL'}
+          </div>
+        </div>
+      `).join('') : '<div class="recent-media-empty">Replay clips from this room will appear here automatically.</div>'}
+    </div>
+  `;
+
+  if (!section.isConnected) els.roomDetail.append(section);
+}
+
+function arrangeRoomDetailLayout(room) {
+  const videoWrap = els.roomDetail.querySelector('.room-video-wrap');
+  if (!videoWrap) return;
+
+  let layout = els.roomDetail.querySelector('.room-live-layout');
+  if (!layout) {
+    layout = document.createElement('div');
+    layout.className = 'room-live-layout';
+    layout.innerHTML = '<div class="room-live-primary"></div><aside class="room-live-side"></aside>';
+    videoWrap.parentNode.insertBefore(layout, videoWrap);
+  }
+
+  const primary = layout.querySelector('.room-live-primary');
+  const side = layout.querySelector('.room-live-side');
+  if (videoWrap.parentNode !== primary) primary.append(videoWrap);
+
+  const business = els.roomDetail.querySelector('.business-panel');
+  const metrics = els.roomDetail.querySelector('.metrics-grid');
+  const production = els.roomDetail.querySelector('.production-health');
+  const info = els.roomDetail.querySelector('.room-info-row');
+
+  [business, metrics, production, info].filter(Boolean).forEach((node) => side.append(node));
+
+  const recent = els.roomDetail.querySelector('.recent-media');
+  if (recent && recent.previousElementSibling !== layout) layout.insertAdjacentElement('afterend', recent);
+
+  const matchingStream = streams.find((stream) => stream.roomId === room.roomId);
+  const frame = els.roomDetail.querySelector('.room-phone-frame');
+  if (frame && matchingStream) frame.dataset.platform = platformFor(matchingStream);
+}
+
 const baseRenderRoomDetail = renderRoomDetail;
 renderRoomDetail = function renderRoomDetailWithAdmin(force = false) {
   baseRenderRoomDetail(force);
@@ -194,24 +311,32 @@ renderRoomDetail = function renderRoomDetailWithAdmin(force = false) {
   if (!room || !authToken) return;
 
   renderProductionHealth(room);
+  renderBusinessPanel(room);
+  renderRecentMedia(room);
 
-  if (els.roomDetail.querySelector('.room-admin-bar')) return;
+  let bar = els.roomDetail.querySelector('.room-admin-bar');
+  if (userCan('settings:manage')) {
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.className = 'room-admin-bar';
 
-  const bar = document.createElement('div');
-  bar.className = 'room-admin-bar';
+      const remove = document.createElement('button');
+      remove.className = 'danger-action';
+      remove.textContent = 'Remove from Monitoring';
+      remove.addEventListener('click', () => removeRoomFromMonitoring(room));
+      bar.append(remove);
 
-  const remove = document.createElement('button');
-  remove.className = 'danger-action';
-  remove.textContent = 'Remove from Monitoring';
-  remove.addEventListener('click', () => removeRoomFromMonitoring(room));
+      const layout = els.roomDetail.querySelector('.room-live-layout');
+      const videoWrap = els.roomDetail.querySelector('.room-video-wrap');
+      if (layout) els.roomDetail.insertBefore(bar, layout);
+      else if (videoWrap) els.roomDetail.insertBefore(bar, videoWrap);
+      else els.roomDetail.append(bar);
+    }
+  } else {
+    bar?.remove();
+  }
 
-  bar.append(remove);
-
-  const productionSection = els.roomDetail.querySelector('.production-health');
-  const videoWrap = els.roomDetail.querySelector('.room-video-wrap');
-  if (productionSection) els.roomDetail.insertBefore(bar, productionSection);
-  else if (videoWrap) els.roomDetail.insertBefore(bar, videoWrap);
-  else els.roomDetail.append(bar);
+  arrangeRoomDetailLayout(room);
 };
 
 function renderAgentShell() {
