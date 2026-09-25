@@ -104,7 +104,7 @@ function loadStreams() {
   const streamsFile = jsonPath('streams.json');
   const saved = readJson(streamsFile, null);
   if (Array.isArray(saved) && saved.length >= 1 && saved.length <= 150) {
-    const normalized = saved.map(normalizeStream);
+    let normalized = saved.map(normalizeStream);
     let changed = false;
 
     const streamNine = normalized.find((stream) => stream.id === 'stream-9');
@@ -118,29 +118,52 @@ function loadStreams() {
       }
     }
 
-    const streamTen = normalized.find((stream) => stream.id === 'stream-10');
-    if (
-      streamTen &&
-      (!streamTen.url || /^stream 10$/i.test(streamTen.name) || streamTen.platform === 'Other')
-    ) {
-      streamTen.name = 'Swish Hits WN';
-      streamTen.url = SWISH_HITS_URL;
-      streamTen.platform = 'Whatnot';
-      changed = true;
-    }
+    // Swish Hits is the canonical 10th wall slot. Earlier beta builds only
+    // replaced Stream 10 when it was blank, which could append Swish Hits as
+    // an 11th row on upgraded installs. Normalize that here and preserve any
+    // room link the appended Swish Hits row may already have.
+    let streamTen = normalized.find((stream) => stream.id === 'stream-10') || normalized[9];
 
-    const hasSwishHits = normalized.some((stream) =>
-      stream.url === SWISH_HITS_URL ||
-      /swish hits/i.test(stream.name)
-    );
-    if (!hasSwishHits && normalized.length < 150) {
-      normalized.push(normalizeStream({
-        id: 'stream-swish-hits-wn',
+    if (!streamTen && normalized.length < 150) {
+      streamTen = normalizeStream({
+        id: 'stream-10',
         name: 'Swish Hits WN',
         url: SWISH_HITS_URL,
         platform: 'Whatnot',
         roomId: ''
-      }, normalized.length));
+      }, 9);
+      normalized.push(streamTen);
+      changed = true;
+    }
+
+    const duplicateHits = normalized.filter((stream) =>
+      stream !== streamTen &&
+      (stream.url === SWISH_HITS_URL || /swish hits/i.test(stream.name))
+    );
+
+    if (streamTen) {
+      const linkedDuplicate = duplicateHits.find((stream) => stream.roomId);
+      const desiredRoomId = streamTen.roomId || linkedDuplicate?.roomId || '';
+
+      if (
+        streamTen.id !== 'stream-10' ||
+        streamTen.name !== 'Swish Hits WN' ||
+        streamTen.url !== SWISH_HITS_URL ||
+        streamTen.platform !== 'Whatnot' ||
+        streamTen.roomId !== desiredRoomId
+      ) {
+        streamTen.id = 'stream-10';
+        streamTen.name = 'Swish Hits WN';
+        streamTen.url = SWISH_HITS_URL;
+        streamTen.platform = 'Whatnot';
+        streamTen.roomId = desiredRoomId;
+        changed = true;
+      }
+    }
+
+    if (duplicateHits.length) {
+      const duplicateIds = new Set(duplicateHits.map((stream) => stream.id));
+      normalized = normalized.filter((stream) => !duplicateIds.has(stream.id));
       changed = true;
     }
 
