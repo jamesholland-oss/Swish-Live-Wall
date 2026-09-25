@@ -46,7 +46,7 @@ button:focus-visible, input:focus, select:focus { border-color: #607086 !importa
 .filter-pill.active { background: #f5f7fb; border-color: #f5f7fb; color: #07090d; font-weight: 800; }
 .toolbar-spacer { flex: 1; }
 .icon-action { min-width: 34px; height: 32px; padding: 0 9px; display: grid; place-items: center; background: var(--panel-2); }
-.wall-grid { height: calc(100% - 47px); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: minmax(310px, 1fr); gap: 7px; align-content: start; }
+.wall-grid { min-height: calc(100% - 47px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 520px; gap: 8px; align-content: start; }
 .stream-tile { position: relative; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: #090b0f; }
 .stream-tile.health-warning { border-color: rgba(242, 201, 76, .72); }
 .stream-tile.health-critical { border-color: rgba(255, 77, 87, .9); }
@@ -65,9 +65,30 @@ button:focus-visible, input:focus, select:focus { border-color: #607086 !importa
 .micro-btn { height: 22px; min-width: 23px; padding: 0 5px; display: grid; place-items: center; background: rgba(17, 24, 33, .92); font-size: 10px; }
 .micro-btn:hover, .icon-action:hover, .ghost:hover { filter: brightness(1.14); }
 .micro-btn.danger { color: #ff9da4; }
-.phone-stage { position: absolute; inset: 32px 0 0; display: flex; justify-content: center; align-items: center; overflow: hidden; padding: 4px; background: #050505; }
+.phone-stage { position: absolute; inset: 32px 0 0; display: flex; justify-content: center; align-items: center; overflow: hidden; padding: 5px; background: #050505; }
 .phone-frame { height: 100%; max-height: 100%; aspect-ratio: 9 / 16; max-width: 100%; overflow: hidden; border-radius: 6px; background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,.06); }
+.stream-tile[data-platform="Whatnot"] .phone-frame,
+.stream-tile[data-platform="Fanatics"] .phone-frame { width: min(100%, 540px); height: 100%; aspect-ratio: auto; }
+.stream-tile[data-platform="TikTok"] .phone-stage { gap: 8px; padding-inline: 8px; }
+.stream-tile[data-platform="TikTok"] .phone-frame { flex: 0 1 auto; }
 .phone-frame webview, .room-phone-frame webview { width: 100%; height: 100%; display: flex; background: black; }
+
+.tiktok-auction-rail {
+  width: 142px;
+  min-width: 142px;
+  height: calc(100% - 8px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  padding: 14px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #090d13;
+}
+.tiktok-auction-kicker { color: var(--muted); font-family: "Michroma", "Inter", sans-serif; font-size: 7px; letter-spacing: .08em; }
+.tiktok-auction-value { margin-top: 5px; font-family: "Michroma", "Inter", sans-serif; font-size: 18px; line-height: 1.2; }
+.tiktok-auction-empty { color: var(--muted); font-size: 10px; line-height: 1.45; }
 .empty-stream { color: #606a78; font-size: 10px; font-weight: 700; }
 .wall-issue { position: absolute; z-index: 7; left: 8px; right: 8px; bottom: 8px; padding: 6px 8px; border-radius: 7px; font-size: 9px; font-weight: 800; letter-spacing: .025em; text-transform: uppercase; backdrop-filter: blur(5px); }
 .wall-issue.warning { background: rgba(71, 57, 10, .90); border: 1px solid rgba(242, 201, 76, .38); color: #ffe596; }
@@ -158,8 +179,12 @@ th { position: sticky; top: 0; z-index: 1; background: var(--panel); color: var(
 .fatal-error { height: 100vh; display: grid; place-items: center; padding: 30px; color: #ffb7bc; text-align: center; }
 
 @media (max-width: 1500px) {
-  .wall-grid, .overview-rooms { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .wall-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-rooms { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 1180px) {
+  .wall-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 1120px) {
   .topbar { grid-template-columns: auto 1fr auto; }
