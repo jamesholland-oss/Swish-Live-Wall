@@ -69,13 +69,6 @@ button:focus-visible, input:focus, select:focus { border-color: #607086 !importa
 .phone-frame { height: 100%; max-height: 100%; aspect-ratio: 9 / 16; max-width: 100%; overflow: hidden; border-radius: 6px; background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,.06); }
 .stream-tile[data-platform="Whatnot"] .phone-frame,
 .stream-tile[data-platform="Fanatics"] .phone-frame { width: min(100%, 540px); height: 100%; aspect-ratio: auto; }
-.stream-tile[data-platform="Fanatics"] .phone-frame webview {
-  position: relative;
-  left: -45%;
-  width: 145%;
-  min-width: 145%;
-  max-width: none;
-}
 .stream-tile[data-platform="TikTok"] .phone-stage { gap: 8px; padding-inline: 8px; }
 .stream-tile[data-platform="TikTok"] .phone-frame { flex: 0 1 auto; }
 .phone-frame webview, .room-phone-frame webview { width: 100%; height: 100%; display: flex; background: black; }
