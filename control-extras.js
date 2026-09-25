@@ -188,6 +188,121 @@ function renderProductionHealth(room) {
   section.innerHTML = html;
 }
 
+function reportMoney(value) {
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? number.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 })
+    : '—';
+}
+
+function reportNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toLocaleString() : '—';
+}
+
+function reportAov(revenue, orders) {
+  const r = Number(revenue);
+  const o = Number(orders);
+  if (!Number.isFinite(r) || !Number.isFinite(o) || o <= 0) return '—';
+  return (r / o).toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderReports() {
+  if (!els.reportsRoot || !userCan('sales:reports')) return;
+
+  const rows = controlRooms
+    .filter((room) => room.business && typeof room.business === 'object')
+    .map((room) => ({
+      room,
+      business: room.business,
+      revenue: Number(room.business.revenue) || 0,
+      orders: Number(room.business.orders) || 0,
+      viewers: Number(room.business.viewers) || 0,
+      peakViewers: Number(room.business.peakViewers) || 0
+    }))
+    .sort((a, b) => b.revenue - a.revenue);
+
+  const totalRevenue = rows.reduce((sum, row) => sum + row.revenue, 0);
+  const totalOrders = rows.reduce((sum, row) => sum + row.orders, 0);
+  const totalViewers = rows.reduce((sum, row) => sum + row.viewers, 0);
+  const activeStreams = rows.filter((row) => row.business.live === true).length;
+  const latestUpdateMs = rows.reduce((latest, row) => {
+    const value = Date.parse(row.business.updatedAt || '');
+    return Number.isFinite(value) ? Math.max(latest, value) : latest;
+  }, 0);
+
+  const freshness = latestUpdateMs
+    ? `Updated ${new Date(latestUpdateMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}`
+    : 'Waiting for business data';
+
+  els.reportsRoot.innerHTML = `
+    <div class="reports-head">
+      <div>
+        <div class="eyebrow">LIVE BUSINESS</div>
+        <h1>Reports</h1>
+      </div>
+      <div class="reports-freshness">${escapeHtml(freshness)}</div>
+    </div>
+
+    <div class="reports-summary">
+      <div class="report-summary-card"><span>GMV</span><strong>${reportMoney(totalRevenue)}</strong></div>
+      <div class="report-summary-card"><span>Orders</span><strong>${reportNumber(totalOrders)}</strong></div>
+      <div class="report-summary-card"><span>AOV</span><strong>${reportAov(totalRevenue, totalOrders)}</strong></div>
+      <div class="report-summary-card"><span>Live Viewers</span><strong>${reportNumber(totalViewers)}</strong></div>
+      <div class="report-summary-card"><span>Active Streams</span><strong>${reportNumber(activeStreams)}</strong></div>
+    </div>
+
+    <section class="reports-table-card">
+      <div class="room-panel-head">
+        <span>CHANNEL PERFORMANCE</span>
+        <small>Current 6AM–6AM reporting window from SB Live data</small>
+      </div>
+
+      <div class="table-wrap">
+        <table class="reports-table">
+          <thead>
+            <tr>
+              <th>Room</th>
+              <th>Platform</th>
+              <th>Status</th>
+              <th>Viewers</th>
+              <th>Peak</th>
+              <th>GMV</th>
+              <th>Orders</th>
+              <th>AOV</th>
+              <th>Current Break</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.length ? rows.map(({ room, business, revenue, orders, viewers, peakViewers }) => `
+              <tr data-report-room="${escapeHtml(room.roomId)}">
+                <td><button class="report-room-link" data-room-id="${escapeHtml(room.roomId)}">${escapeHtml(room.roomName)}</button></td>
+                <td>${escapeHtml(business.platform || '—')}</td>
+                <td><span class="report-live-pill ${business.live === true ? 'live' : 'off'}">${business.live === true ? 'LIVE' : 'OFF'}</span></td>
+                <td>${reportNumber(viewers)}</td>
+                <td>${reportNumber(peakViewers)}</td>
+                <td>${reportMoney(revenue)}</td>
+                <td>${reportNumber(orders)}</td>
+                <td>${reportAov(revenue, orders)}</td>
+                <td class="report-break-cell">${escapeHtml(business.currentBreak || '—')}</td>
+              </tr>
+            `).join('') : `
+              <tr><td colspan="9" class="empty-cell">No business data has arrived yet. Start the SB Live → Swish Control bridge to populate live numbers.</td></tr>
+            `}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+
+  els.reportsRoot.querySelectorAll('.report-room-link').forEach((button) => {
+    button.addEventListener('click', () => {
+      selectedRoomId = button.dataset.roomId;
+      switchPage('rooms');
+    });
+  });
+}
+
 function formatBusinessNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number.toLocaleString() : '—';
