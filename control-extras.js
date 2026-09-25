@@ -114,7 +114,9 @@ function productionCard(title, state, details = []) {
     <div class="production-card ${state.className}">
       <div class="production-card-head">
         <span>${escapeHtml(title)}</span>
-        <strong><span class="production-dot"></span>${escapeHtml(state.label)}</strong>
+        <span class="production-status-dot" title="${escapeHtml(state.label)}" aria-label="${escapeHtml(state.label)}">
+          <span class="production-dot"></span>
+        </span>
       </div>
       ${details.filter(Boolean).map((detail) => `<div class="production-detail">${detail}</div>`).join('')}
     </div>
