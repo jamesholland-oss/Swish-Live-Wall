@@ -143,7 +143,8 @@ function createLegacyStreamWebview(stream) {
       // Keep the proven V1.3 user agent/session behavior, but scale Fanatics
       // slightly smaller so its native auction UI fits like Whatnot on the
       // standard three-column wall.
-      view.setZoomFactor(platformFor(stream) === 'Fanatics' ? 0.72 : 1);
+      const platform = platformFor(stream);
+      view.setZoomFactor(platform === 'Fanatics' ? 0.72 : platform === 'TikTok' ? 1.12 : 1);
     } catch (_) {}
   };
 
