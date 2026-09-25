@@ -129,6 +129,21 @@ function loadStreams() {
       changed = true;
     }
 
+    const hasSwishHits = normalized.some((stream) =>
+      stream.url === SWISH_HITS_URL ||
+      /swish hits/i.test(stream.name)
+    );
+    if (!hasSwishHits && normalized.length < 150) {
+      normalized.push(normalizeStream({
+        id: 'stream-swish-hits-wn',
+        name: 'Swish Hits WN',
+        url: SWISH_HITS_URL,
+        platform: 'Whatnot',
+        roomId: ''
+      }, normalized.length));
+      changed = true;
+    }
+
     if (changed) writeJson(streamsFile, normalized);
     return normalized;
   }
