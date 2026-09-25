@@ -1,13 +1,12 @@
-// Swish Control live auction header monitor.
-// Fanatics and TikTok pages stay visually untouched. This reads only the
-// currently-rendered bid and timer values and shows them beside the room name.
+// Swish Control TikTok auction monitor.
+// Whatnot and Fanatics keep their native auction UI. TikTok gets a compact
+// side rail because its embedded UI does not reliably expose bid/timer data.
 
 const auctionMonitorState = new Map();
 let auctionMonitorBusy = false;
 
 function auctionMonitorSupported(stream) {
-  const platform = platformFor(stream);
-  return platform === 'Fanatics' || platform === 'TikTok';
+  return platformFor(stream) === 'TikTok';
 }
 
 function auctionExtractionScript() {
@@ -126,48 +125,50 @@ function formatAuctionTimer(seconds) {
   return `${mins}:${String(secs).padStart(2, '0')}`;
 }
 
-function ensureAuctionBadge(tile) {
+function ensureAuctionRail(tile) {
   if (!tile) return null;
-  let badge = tile.querySelector('.swish-auction-badge');
-  if (badge) return badge;
+  let rail = tile.querySelector('.tiktok-auction-rail');
+  if (rail) return rail;
 
-  const identity = tile.querySelector('.stream-identity');
-  if (!identity) return null;
+  const stage = tile.querySelector('.phone-stage');
+  if (!stage) return null;
 
-  badge = document.createElement('span');
-  badge.className = 'swish-auction-badge';
-  badge.style.cssText = [
-    'display:none',
-    'margin-left:10px',
-    'padding:3px 7px',
-    'border:1px solid rgba(255,255,255,.18)',
-    'border-radius:6px',
-    'background:rgba(255,255,255,.08)',
-    'font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
-    'font-size:11px',
-    'font-weight:800',
-    'line-height:1',
-    'letter-spacing:.01em',
-    'white-space:nowrap'
-  ].join(';');
-  identity.appendChild(badge);
-  return badge;
+  rail = document.createElement('aside');
+  rail.className = 'tiktok-auction-rail';
+  rail.innerHTML = `
+    <div>
+      <div class="tiktok-auction-kicker">CURRENT BID</div>
+      <div class="tiktok-auction-value" data-auction-bid>—</div>
+    </div>
+    <div>
+      <div class="tiktok-auction-kicker">TIME LEFT</div>
+      <div class="tiktok-auction-value" data-auction-time>—</div>
+    </div>
+    <div class="tiktok-auction-empty" data-auction-empty>Waiting for auction data.</div>
+  `;
+  stage.appendChild(rail);
+  return rail;
 }
 
 function renderAuctionState(streamId, data) {
   const tile = els.wallGrid.querySelector(`.stream-tile[data-stream-id="${CSS.escape(streamId)}"]`);
-  const badge = ensureAuctionBadge(tile);
-  if (!badge) return;
+  const rail = ensureAuctionRail(tile);
+  if (!rail) return;
+
+  const bid = rail.querySelector('[data-auction-bid]');
+  const time = rail.querySelector('[data-auction-time]');
+  const empty = rail.querySelector('[data-auction-empty]');
 
   if (!data?.bid || data?.seconds == null) {
-    badge.style.display = 'none';
-    badge.textContent = '';
+    if (bid) bid.textContent = '—';
+    if (time) time.textContent = '—';
+    if (empty) empty.textContent = 'No active auction detected.';
     return;
   }
 
-  badge.textContent = `BID ${data.bid} • ${formatAuctionTimer(data.seconds)}`;
-  badge.style.display = 'inline-flex';
-  badge.style.alignItems = 'center';
+  if (bid) bid.textContent = data.bid;
+  if (time) time.textContent = formatAuctionTimer(data.seconds);
+  if (empty) empty.textContent = 'Live auction';
 }
 
 async function readAuctionState(stream) {
@@ -217,7 +218,7 @@ async function pollAuctionHeaders() {
 
 function attachAuctionMonitor(tile, stream) {
   if (!tile || !auctionMonitorSupported(stream)) return tile;
-  ensureAuctionBadge(tile);
+  ensureAuctionRail(tile);
   const view = tile.querySelector('webview');
   const reset = () => {
     auctionMonitorState.set(stream.id, { misses: 0, data: null });
