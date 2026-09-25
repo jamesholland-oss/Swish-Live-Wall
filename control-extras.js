@@ -272,6 +272,25 @@ function renderRecentMedia(room) {
   if (!section.isConnected) els.roomDetail.append(section);
 }
 
+function setRoomFocusMode(enabled) {
+  document.body.classList.toggle('room-focus-mode', Boolean(enabled));
+  const button = els.roomDetail?.querySelector('.room-focus-toggle');
+  if (button) button.textContent = enabled ? '← EXIT FULL VIEW' : '⛶ FULL VIEW';
+}
+
+function ensureRoomFocusButton() {
+  const head = els.roomDetail.querySelector('.room-detail-head');
+  if (!head) return;
+  let button = head.querySelector('.room-focus-toggle');
+  if (button) return;
+
+  button = document.createElement('button');
+  button.className = 'ghost room-focus-toggle';
+  button.textContent = document.body.classList.contains('room-focus-mode') ? '← EXIT FULL VIEW' : '⛶ FULL VIEW';
+  button.addEventListener('click', () => setRoomFocusMode(!document.body.classList.contains('room-focus-mode')));
+  head.append(button);
+}
+
 function arrangeRoomDetailLayout(room) {
   const videoWrap = els.roomDetail.querySelector('.room-video-wrap');
   if (!videoWrap) return;
@@ -337,6 +356,7 @@ renderRoomDetail = function renderRoomDetailWithAdmin(force = false) {
   }
 
   arrangeRoomDetailLayout(room);
+  ensureRoomFocusButton();
 };
 
 function renderAgentShell() {
@@ -406,3 +426,10 @@ els.profileBtn?.addEventListener('click', () => clearControlSession());
 setInterval(() => {
   if (appConfig.serverUrl) pingControlServer();
 }, 30000);
+
+
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && document.body.classList.contains('room-focus-mode')) {
+    setRoomFocusMode(false);
+  }
+});
