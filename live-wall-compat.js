@@ -13,12 +13,14 @@ const liveWallCompatState = {
 };
 
 function wallConfigSignature() {
+  // Room assignment is metadata only. Do not include roomId here because
+  // linking a stream to a monitored room must never recreate the provider
+  // webview/session.
   return streams.map((stream) => [
     stream.id,
     stream.name,
     stream.url,
-    stream.platform,
-    stream.roomId
+    stream.platform
   ].join('::')).join('|');
 }
 
@@ -186,15 +188,13 @@ function buildLegacyWallTile(stream) {
     <span class="stream-name">${escapeHtml(stream.name)}</span>
   `;
 
-  if (stream.roomId && authToken && typeof userCan === 'function' && userCan('rooms:view')) {
-    identity.classList.add('stream-room-link');
-    identity.title = 'Open room dashboard';
-    identity.addEventListener('click', (event) => {
-      event.stopPropagation();
-      selectedRoomId = stream.roomId;
-      switchPage('rooms');
-    });
-  }
+  identity.addEventListener('click', (event) => {
+    const currentStream = streams.find((candidate) => candidate.id === tile.dataset.streamId);
+    if (!currentStream?.roomId || !authToken || typeof userCan !== 'function' || !userCan('rooms:view')) return;
+    event.stopPropagation();
+    selectedRoomId = currentStream.roomId;
+    switchPage('rooms');
+  });
 
   const controls = document.createElement('div');
   controls.className = 'stream-controls';
@@ -289,8 +289,29 @@ function applyWallFilterWithoutReload() {
   }
 }
 
+function syncWallRoomBindings() {
+  els.wallGrid.querySelectorAll('.stream-tile').forEach((tile) => {
+    const stream = streams.find((candidate) => candidate.id === tile.dataset.streamId);
+    if (!stream) return;
+
+    tile.dataset.roomId = stream.roomId || '';
+
+    const identity = tile.querySelector('.stream-identity');
+    const canOpenRoom = Boolean(
+      stream.roomId &&
+      authToken &&
+      typeof userCan === 'function' &&
+      userCan('rooms:view')
+    );
+
+    identity?.classList.toggle('stream-room-link', canOpenRoom);
+    if (identity) identity.title = canOpenRoom ? 'Open room dashboard' : '';
+  });
+}
+
 // Render/recreate webviews only when stream configuration itself changes.
-// Navigating tabs, receiving health updates and changing filters do not rebuild.
+// Navigating tabs, receiving health updates, room assignment and changing
+// filters do not rebuild the provider webviews.
 renderWall = function renderWallCompat() {
   const signature = wallConfigSignature();
   const alreadyBuilt = els.wallGrid.querySelectorAll('.stream-tile').length > 0;
@@ -302,6 +323,7 @@ renderWall = function renderWallCompat() {
     liveWallCompatState.configSignature = signature;
   }
 
+  syncWallRoomBindings();
   applyWallFilterWithoutReload();
   updateWallStatusDecorations();
 };
