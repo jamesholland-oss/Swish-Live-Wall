@@ -473,3 +473,141 @@ body.room-focus-mode .room-live-layout .room-video-stage {
   height: calc(100vh - 185px);
   min-height: 620px;
 }
+
+
+.reports-root {
+  padding: 14px;
+}
+
+.reports-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.reports-head h1 {
+  margin: 4px 0 0;
+  font-family: 'Michroma', sans-serif;
+  font-size: 23px;
+  font-weight: 400;
+}
+
+.reports-freshness {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.reports-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.report-summary-card {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #090d13;
+}
+
+.report-summary-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.report-summary-card strong {
+  display: block;
+  margin-top: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Michroma', sans-serif;
+  font-size: 20px;
+  font-weight: 400;
+}
+
+.reports-table-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #090d13;
+}
+
+.reports-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.reports-table th,
+.reports-table td {
+  padding: 10px 9px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.reports-table th {
+  color: var(--muted);
+  font-family: 'Michroma', sans-serif;
+  font-size: 7px;
+  font-weight: 400;
+  letter-spacing: .05em;
+}
+
+.report-room-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.report-room-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.report-live-pill {
+  display: inline-flex;
+  align-items: center;
+  min-width: 38px;
+  justify-content: center;
+  padding: 4px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  font-family: 'Michroma', sans-serif;
+  font-size: 6px;
+}
+
+.report-live-pill.live {
+  color: var(--green);
+  border-color: rgba(60, 220, 130, .35);
+}
+
+.report-live-pill.off {
+  color: var(--muted);
+}
+
+.report-break-cell {
+  max-width: 320px;
+}
+
+@media (max-width: 1250px) {
+  .reports-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .reports-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
