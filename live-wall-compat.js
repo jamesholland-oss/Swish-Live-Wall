@@ -6,11 +6,14 @@
 // in-page state. V2 may decorate tiles with health data, but telemetry never
 // owns the stream lifecycle.
 
+const FANATICS_SHOP_URL = 'https://www.fanatics.live/shops/swish-breaks';
+
 const liveWallCompatState = {
   configSignature: '',
   exitButton: null,
   audioMutedByStream: new Map(),
-  roomPortal: null
+  roomPortal: null,
+  fanaticsResolveTimers: new Map()
 };
 
 function wallConfigSignature() {
@@ -132,24 +135,152 @@ function streamTelemetryState(stream) {
   return 'unknown';
 }
 
-function ensureOffAirOverlay(tile, stream) {
+function ensureOffAirOverlay(tile, stream, title = 'NO STREAM RIGHT NOW', subtitle = '') {
   let overlay = tile?.querySelector('.stream-off-air');
-  if (overlay) return overlay;
-
   const stage = tile?.querySelector('.phone-stage');
   if (!stage) return null;
 
-  overlay = document.createElement('div');
-  overlay.className = 'stream-off-air';
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'stream-off-air';
+    stage.append(overlay);
+  }
+
+  const fallbackSubtitle = `${stream.name} will return here automatically when OBS goes live.`;
   overlay.innerHTML = `
     <div class="stream-off-air-inner">
       <div class="stream-off-air-kicker">SWISH CONTROL</div>
-      <div class="stream-off-air-title">NO STREAM RIGHT NOW</div>
-      <div class="stream-off-air-subtitle">${escapeHtml(stream.name)} will return here automatically when OBS goes live.</div>
+      <div class="stream-off-air-title">${escapeHtml(title)}</div>
+      <div class="stream-off-air-subtitle">${escapeHtml(subtitle || fallbackSubtitle)}</div>
     </div>
   `;
-  stage.append(overlay);
   return overlay;
+}
+
+function fanaticsChannelCode(stream) {
+  const name = String(stream?.name || '').toLowerCase();
+  if (name.includes('wax')) return 'SW';
+  if (name.includes('bats')) return 'SB';
+  if (name.includes('breaks') || name.includes('main')) return 'SM';
+  return '';
+}
+
+function currentViewUrl(view) {
+  try { return String(view?.getURL?.() || ''); }
+  catch (_) { return ''; }
+}
+
+function loadFanaticsShop(view) {
+  if (!view?.isConnected) return;
+  const current = currentViewUrl(view);
+  if (current.startsWith(FANATICS_SHOP_URL)) return;
+  try {
+    view.dataset.swishFanaticsResolvedUrl = '';
+    view.loadURL(FANATICS_SHOP_URL);
+  } catch (_) {}
+}
+
+function scheduleFanaticsResolution(view, stream, tile, delayMs = 500) {
+  if (!view || !stream?.id) return;
+  const existing = liveWallCompatState.fanaticsResolveTimers.get(stream.id);
+  if (existing) clearTimeout(existing);
+
+  const timer = setTimeout(() => {
+    liveWallCompatState.fanaticsResolveTimers.delete(stream.id);
+    resolveFanaticsCurrentShow(view, stream, tile).catch(() => {});
+  }, delayMs);
+  liveWallCompatState.fanaticsResolveTimers.set(stream.id, timer);
+}
+
+async function resolveFanaticsCurrentShow(view, stream, tile) {
+  if (!view?.isConnected || platformFor(stream) !== 'Fanatics' || !stream.roomId) return;
+
+  const liveState = streamTelemetryState(stream);
+  if (liveState !== 'live') {
+    const title = liveState === 'unknown' ? 'CHECKING LIVE STATUS' : 'NO STREAM RIGHT NOW';
+    const subtitle = liveState === 'unknown'
+      ? 'Waiting for the room agent before showing a Fanatics stream.'
+      : `${stream.name} will appear automatically when this room goes live.`;
+    ensureOffAirOverlay(tile, stream, title, subtitle);
+    loadFanaticsShop(view);
+    pauseView(view);
+    return;
+  }
+
+  const resolvedUrl = String(view.dataset.swishFanaticsResolvedUrl || '');
+  const current = currentViewUrl(view);
+
+  if (resolvedUrl && current && current.split('?')[0] === resolvedUrl.split('?')[0]) {
+    tile.querySelector('.stream-off-air')?.remove();
+    resumeView(view);
+    return;
+  }
+
+  ensureOffAirOverlay(
+    tile,
+    stream,
+    'FINDING LIVE STREAM',
+    `Looking for the current ${stream.name} show on Fanatics.`
+  );
+
+  if (!current.startsWith(FANATICS_SHOP_URL)) {
+    loadFanaticsShop(view);
+    return;
+  }
+
+  const code = fanaticsChannelCode(stream);
+  if (!code) {
+    ensureOffAirOverlay(tile, stream, 'NO STREAM RIGHT NOW', 'No Fanatics channel mapping is configured for this room.');
+    return;
+  }
+
+  if (view.dataset.swishFanaticsResolving === '1') return;
+  view.dataset.swishFanaticsResolving = '1';
+
+  try {
+    const match = await view.executeJavaScript(`
+      (() => {
+        const code = ${JSON.stringify(code)};
+        const codePattern = new RegExp('\\\\(' + code + '\\\\)|\\\\b' + code + '\\\\b', 'i');
+        const items = Array.from(document.querySelectorAll('[data-role="show-item"]'));
+
+        for (const item of items) {
+          const id = item.getAttribute('id') || '';
+          if (!id.startsWith('live-show-')) continue;
+
+          const titleNode = item.querySelector('[class*="line-clamp-2"][class*="break-words"]');
+          const ariaLabel = item.getAttribute('aria-label') || '';
+          const title = (titleNode?.textContent || ariaLabel || '').trim();
+          if (!codePattern.test(title)) continue;
+
+          const href = item.getAttribute('href') || item.href || '';
+          if (!href) continue;
+          return new URL(href, location.origin).href;
+        }
+
+        return '';
+      })();
+    `);
+
+    const showUrl = String(match || '').trim();
+    if (!showUrl) {
+      ensureOffAirOverlay(
+        tile,
+        stream,
+        'NO STREAM RIGHT NOW',
+        `OBS is live, but Fanatics has not published a live ${stream.name} show yet.`
+      );
+      scheduleFanaticsResolution(view, stream, tile, 4000);
+      return;
+    }
+
+    view.dataset.swishFanaticsResolvedUrl = showUrl;
+    try { view.loadURL(showUrl); } catch (_) {}
+  } catch (_) {
+    scheduleFanaticsResolution(view, stream, tile, 4000);
+  } finally {
+    view.dataset.swishFanaticsResolving = '';
+  }
 }
 
 function updateStreamLivePresentation(tile, stream) {
@@ -158,6 +289,17 @@ function updateStreamLivePresentation(tile, stream) {
   const previous = tile.dataset.liveState || 'unknown';
   const view = tile.querySelector('webview');
   tile.dataset.liveState = next;
+
+  // Linked Fanatics rooms are strict: never show a random/recommended stream.
+  // The room agent decides whether the room is live, then we resolve the
+  // matching live Fanatics show from the Swish shop page.
+  if (platformFor(stream) === 'Fanatics' && stream.roomId) {
+    if (next !== previous && next !== 'live') {
+      view && (view.dataset.swishFanaticsResolvedUrl = '');
+    }
+    resolveFanaticsCurrentShow(view, stream, tile).catch(() => {});
+    return;
+  }
 
   if (next === 'off') {
     ensureOffAirOverlay(tile, stream);
@@ -168,8 +310,6 @@ function updateStreamLivePresentation(tile, stream) {
   tile.querySelector('.stream-off-air')?.remove();
 
   if (next === 'live') {
-    // If OBS has just gone live again, reload the provider page once so it
-    // reconnects to the current live show instead of staying on an ended page.
     if (previous === 'off') {
       try { view?.reload(); } catch (_) {}
     } else {
@@ -178,7 +318,7 @@ function updateStreamLivePresentation(tile, stream) {
     return;
   }
 
-  // Unknown telemetry must never hide a provider page.
+  // Non-Fanatics providers remain fail-open if monitoring is unavailable.
   resumeView(view);
 }
 
@@ -187,7 +327,8 @@ function createLegacyStreamWebview(stream) {
   if (!url) return null;
 
   const view = document.createElement('webview');
-  view.src = url;
+  const initialUrl = platformFor(stream) === 'Fanatics' && stream.roomId ? FANATICS_SHOP_URL : url;
+  view.src = initialUrl;
   view.setAttribute('partition', 'persist:swish-live-wall');
 
   const ua = userAgentFor(url);
@@ -212,12 +353,48 @@ function createLegacyStreamWebview(stream) {
       view.setUserAgent(ua);
       applyProviderPresentation();
       applyStreamAudioState(view, streamMuted(stream.id));
+      if (platformFor(stream) === 'Fanatics' && stream.roomId) {
+        const tile = view.closest('.stream-tile');
+        scheduleFanaticsResolution(view, stream, tile, 800);
+      }
     } catch (_) {}
   });
 
   view.addEventListener('did-finish-load', () => {
     applyProviderPresentation();
     applyStreamAudioState(view, streamMuted(stream.id));
+
+    if (platformFor(stream) === 'Fanatics' && stream.roomId) {
+      const tile = view.closest('.stream-tile');
+      const resolvedUrl = String(view.dataset.swishFanaticsResolvedUrl || '');
+      const current = currentViewUrl(view);
+
+      if (resolvedUrl && current.split('?')[0] === resolvedUrl.split('?')[0]) {
+        if (streamTelemetryState(stream) === 'live') {
+          tile?.querySelector('.stream-off-air')?.remove();
+          resumeView(view);
+        }
+      } else {
+        scheduleFanaticsResolution(view, stream, tile, 800);
+      }
+    }
+  });
+
+  view.addEventListener('did-navigate', (event) => {
+    if (platformFor(stream) !== 'Fanatics' || !stream.roomId) return;
+    const resolvedUrl = String(view.dataset.swishFanaticsResolvedUrl || '');
+    const nextUrl = String(event.url || '');
+
+    // Fanatics redirects ended shows to unrelated live sellers. If that
+    // happens, immediately return to our shop resolver instead of displaying it.
+    if (
+      resolvedUrl &&
+      nextUrl.includes('/shows/') &&
+      nextUrl.split('?')[0] !== resolvedUrl.split('?')[0]
+    ) {
+      view.dataset.swishFanaticsResolvedUrl = '';
+      loadFanaticsShop(view);
+    }
   });
 
   return view;
