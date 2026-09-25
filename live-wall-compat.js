@@ -67,6 +67,7 @@ function setStreamMuted(streamId, muted) {
 function streamTelemetryState(stream) {
   if (!stream?.roomId) return 'unknown';
   const status = statusForRoom(stream.roomId);
+  if (status?.agentOnline === false) return 'unknown';
   if (status?.streamingActive === true) return 'live';
   if (status?.streamingActive === false) return 'off';
   return 'unknown';
