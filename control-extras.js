@@ -435,3 +435,6 @@ window.addEventListener('keydown', (event) => {
     setRoomFocusMode(false);
   }
 });
+
+
+window.startSwishControl?.();
