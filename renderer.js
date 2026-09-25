@@ -135,31 +135,37 @@ function activeWebviews() {
 }
 
 function pauseView(view) {
-  if (!view?.executeJavaScript) return;
-  view.executeJavaScript(`
-    (() => {
-      document.querySelectorAll('video,audio').forEach((el) => {
-        if (!el.paused) {
-          el.dataset.swishWasPlaying = '1';
-          el.pause();
-        }
-      });
-    })();
-  `).catch(() => {});
+  if (!view?.executeJavaScript || !view.isConnected) return;
+  try {
+    const result = view.executeJavaScript(`
+      (() => {
+        document.querySelectorAll('video,audio').forEach((el) => {
+          if (!el.paused) {
+            el.dataset.swishWasPlaying = '1';
+            el.pause();
+          }
+        });
+      })();
+    `);
+    result?.catch?.(() => {});
+  } catch (_) {}
 }
 
 function resumeView(view) {
-  if (!view?.executeJavaScript) return;
-  view.executeJavaScript(`
-    (() => {
-      document.querySelectorAll('video,audio').forEach((el) => {
-        if (el.dataset.swishWasPlaying === '1') {
-          delete el.dataset.swishWasPlaying;
-          el.play().catch(() => {});
-        }
-      });
-    })();
-  `).catch(() => {});
+  if (!view?.executeJavaScript || !view.isConnected) return;
+  try {
+    const result = view.executeJavaScript(`
+      (() => {
+        document.querySelectorAll('video,audio').forEach((el) => {
+          if (el.dataset.swishWasPlaying === '1') {
+            delete el.dataset.swishWasPlaying;
+            el.play().catch(() => {});
+          }
+        });
+      })();
+    `);
+    result?.catch?.(() => {});
+  } catch (_) {}
 }
 
 function createStreamWebview(stream) {
