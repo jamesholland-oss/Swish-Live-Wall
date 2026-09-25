@@ -1008,7 +1008,7 @@ async function bootstrap() {
   startPolling();
 }
 
-bootstrap().catch((err) => {
+window.startSwishControl = () => bootstrap().catch((err) => {
   console.error(err);
   document.body.innerHTML = `<div class="fatal-error">Swish Control failed to start.<br>${escapeHtml(err.message)}</div>`;
 });
