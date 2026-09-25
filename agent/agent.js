@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const net = require('net');
 const { execFile } = require('child_process');
 
-const AGENT_VERSION = '2.0.0-beta.14';
+const AGENT_VERSION = '2.0.0-beta.19';
 const MAX_DIAGNOSTIC_BYTES = 25 * 1024 * 1024;
 
 function ensureDir(dir) {
@@ -97,6 +97,76 @@ async function shadeMountStatus() {
     if (shadeVolume) return { mounted: true, mountPath: path.join('/Volumes', shadeVolume.name) };
   } catch (_) {}
   return { mounted: false, mountPath: '' };
+}
+
+async function waitForStableFile(filePath, attempts = 24, delayMs = 500) {
+  let lastSize = -1;
+  let stableReads = 0;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const stat = await fs.promises.stat(filePath);
+      if (stat.isFile() && stat.size > 0) {
+        if (stat.size === lastSize) stableReads += 1;
+        else stableReads = 0;
+        lastSize = stat.size;
+        if (stableReads >= 2) return stat;
+      }
+    } catch (_) {}
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  try {
+    const stat = await fs.promises.stat(filePath);
+    return stat.isFile() && stat.size > 0 ? stat : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function destinationForMedia(sourcePath, kind) {
+  const mount = await shadeMountStatus();
+  if (!mount.mounted || !mount.mountPath) {
+    return { destinationPath: '', attempted: true, verified: false, error: 'Shade storage is not mounted.' };
+  }
+
+  const folder = kind === 'clip' ? 'CLIPS' : 'VOD';
+  const destinationDir = path.join(mount.mountPath, 'Content', folder);
+  try {
+    await fs.promises.mkdir(destinationDir, { recursive: true });
+  } catch (err) {
+    return { destinationPath: '', attempted: true, verified: false, error: `Unable to create Shade/${folder}: ${err.message}` };
+  }
+
+  const sourceStat = await waitForStableFile(sourcePath);
+  if (!sourceStat) {
+    return { destinationPath: '', attempted: true, verified: false, error: 'Source media file was not readable after save.' };
+  }
+
+  const fileName = path.basename(sourcePath);
+  let destinationPath = path.join(destinationDir, fileName);
+
+  try {
+    const existing = await fs.promises.stat(destinationPath);
+    if (existing.isFile() && existing.size === sourceStat.size) {
+      return { destinationPath, attempted: true, verified: true, sourceStat };
+    }
+
+    const parsed = path.parse(fileName);
+    destinationPath = path.join(destinationDir, `${parsed.name}-${Date.now()}${parsed.ext}`);
+  } catch (_) {}
+
+  try {
+    await fs.promises.copyFile(sourcePath, destinationPath);
+    const destinationStat = await fs.promises.stat(destinationPath);
+    return {
+      destinationPath,
+      attempted: true,
+      verified: destinationStat.isFile() && destinationStat.size === sourceStat.size,
+      sourceStat,
+      error: destinationStat.size === sourceStat.size ? '' : 'Shade copy size did not match the local file.'
+    };
+  } catch (err) {
+    return { destinationPath, attempted: true, verified: false, sourceStat, error: `Shade copy failed: ${err.message}` };
+  }
 }
 
 async function productionAppMetrics(snapshot, cachedVersions) {
@@ -346,6 +416,10 @@ function startAgent(options = {}) {
   let timer = null;
   let versionCacheAt = 0;
   let versionCache = { obs: '', shade: '', obsbot: '', insta360: '', streamDeck: '' };
+  let obsEventSocket = null;
+  let obsEventReconnectTimer = null;
+  let obsEventConnecting = false;
+  const seenMediaEvents = new Set();
   const sampleCpu = createCpuSampler();
 
   async function refreshVersions() {
@@ -376,6 +450,139 @@ function startAgent(options = {}) {
     enrollmentKey = '';
     if (typeof options.onEnrolled === 'function') options.onEnrolled(credentials);
     return credentials;
+  }
+
+  async function reportMedia(kind, sourcePath) {
+    const fileName = path.basename(String(sourcePath || ''));
+    if (!fileName) return;
+    if (kind === 'clip' && !/^replay/i.test(fileName)) return;
+
+    const stableStat = await waitForStableFile(sourcePath);
+    if (!stableStat) {
+      console.error(`[Swish Agent] Saved media was not readable: ${sourcePath}`);
+      return;
+    }
+
+    const eventId = crypto
+      .createHash('sha256')
+      .update(`${kind}:${sourcePath}:${stableStat.size}:${stableStat.mtimeMs}`)
+      .digest('hex')
+      .slice(0, 40);
+
+    if (seenMediaEvents.has(eventId)) return;
+    seenMediaEvents.add(eventId);
+    if (seenMediaEvents.size > 250) {
+      const first = seenMediaEvents.values().next().value;
+      if (first) seenMediaEvents.delete(first);
+    }
+
+    const shade = await destinationForMedia(sourcePath, kind);
+    const auth = await enroll();
+
+    try {
+      const response = await fetch(`${serverUrl}/api/agent/media`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${auth.token}`
+        },
+        body: JSON.stringify({
+          eventId,
+          kind,
+          fileName,
+          createdAt: new Date(stableStat.mtimeMs || Date.now()).toISOString(),
+          sourceBytes: stableStat.size,
+          localSaved: true,
+          shadeAttempted: shade.attempted,
+          shadeVerified: shade.verified,
+          shadePath: shade.destinationPath || '',
+          error: shade.error || ''
+        })
+      });
+      if (!response.ok) console.error(`[Swish Agent] Media event upload failed (${response.status})`);
+    } catch (err) {
+      console.error(`[Swish Agent] Media event upload failed: ${err.message}`);
+    }
+  }
+
+  function scheduleObsEventReconnect() {
+    if (stopped || obsEventReconnectTimer) return;
+    obsEventReconnectTimer = setTimeout(() => {
+      obsEventReconnectTimer = null;
+      connectObsEventSocket();
+    }, 5000);
+  }
+
+  function connectObsEventSocket() {
+    if (stopped || obsEventConnecting || (obsEventSocket && obsEventSocket.readyState <= 1)) return;
+    if (typeof WebSocket === 'undefined') return;
+
+    obsEventConnecting = true;
+    let identified = false;
+    let socket;
+    try {
+      socket = new WebSocket(`ws://${obsHost}:${obsPort}`);
+      obsEventSocket = socket;
+    } catch (_) {
+      obsEventConnecting = false;
+      scheduleObsEventReconnect();
+      return;
+    }
+
+    socket.addEventListener('open', () => {
+      obsEventConnecting = false;
+    });
+
+    socket.addEventListener('message', (event) => {
+      try {
+        const message = JSON.parse(String(event.data));
+        if (message.op === 0) {
+          const hello = message.d || {};
+          const auth = hello.authentication;
+          if (auth && !obsPassword) {
+            try { socket.close(); } catch (_) {}
+            return;
+          }
+          const identify = { op: 1, d: { rpcVersion: 1, eventSubscriptions: 64 } };
+          if (auth) identify.d.authentication = obsAuthentication(obsPassword, auth.challenge, auth.salt);
+          socket.send(JSON.stringify(identify));
+          return;
+        }
+
+        if (message.op === 2) {
+          identified = true;
+          return;
+        }
+
+        if (message.op !== 5 || !identified) return;
+        const eventType = String(message.d?.eventType || '');
+        const eventData = message.d?.eventData || {};
+
+        if (eventType === 'ReplayBufferSaved' && eventData.savedReplayPath) {
+          reportMedia('clip', String(eventData.savedReplayPath)).catch((err) => {
+            console.error(`[Swish Agent] Replay processing failed: ${err.message}`);
+          });
+          return;
+        }
+
+        if (
+          eventType === 'RecordStateChanged' &&
+          eventData.outputActive === false &&
+          eventData.outputPath
+        ) {
+          reportMedia('vod', String(eventData.outputPath)).catch((err) => {
+            console.error(`[Swish Agent] VOD processing failed: ${err.message}`);
+          });
+        }
+      } catch (_) {}
+    });
+
+    socket.addEventListener('error', () => {});
+    socket.addEventListener('close', () => {
+      if (obsEventSocket === socket) obsEventSocket = null;
+      obsEventConnecting = false;
+      scheduleObsEventReconnect();
+    });
   }
 
   async function collectMetrics() {
@@ -428,7 +635,14 @@ function startAgent(options = {}) {
           platform: `${process.platform}-${process.arch}`,
           appVersion: AGENT_VERSION,
           metrics: await collectMetrics(),
-          capabilities: ['production-app-health', 'shade-mount-health', 'mac-memory-pressure', 'diagnostics-bundle-v1']
+          capabilities: [
+            'production-app-health',
+            'shade-mount-health',
+            'mac-memory-pressure',
+            'diagnostics-bundle-v1',
+            'obs-output-events-v1',
+            'media-routing-v1'
+          ]
         })
       });
       if (response.status === 401) {
@@ -447,10 +661,13 @@ function startAgent(options = {}) {
   }
 
   ensureDir(stateDir);
+  connectObsEventSocket();
   heartbeat();
   return () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    if (obsEventReconnectTimer) clearTimeout(obsEventReconnectTimer);
+    try { obsEventSocket?.close(); } catch (_) {}
   };
 }
 
