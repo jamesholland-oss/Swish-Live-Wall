@@ -25,6 +25,8 @@ const els = {
   overviewPage: $('overviewPage'),
   wallPage: $('wallPage'),
   roomsPage: $('roomsPage'),
+  reportsPage: $('reportsPage'),
+  reportsRoot: $('reportsRoot'),
   incidentsPage: $('incidentsPage'),
   overviewSummary: $('overviewSummary'),
   overviewRooms: $('overviewRooms'),
@@ -274,6 +276,7 @@ async function refreshControlData() {
     if (currentPage === 'wall') updateWallStatusDecorations();
     if (currentPage === 'overview') renderOverview();
     if (currentPage === 'rooms') renderRooms();
+    if (currentPage === 'reports' && typeof renderReports === 'function') renderReports();
     if (currentPage === 'incidents') renderIncidents();
   } catch (err) {
     if (err.status === 401) signOut();
@@ -317,6 +320,7 @@ function applyRoleUi() {
       const allowed =
         page === 'wall' ||
         ((page === 'overview' || page === 'rooms') && userCan('rooms:view')) ||
+        (page === 'reports' && userCan('sales:reports')) ||
         (page === 'incidents' && userCan('incidents:view'));
       button.classList.toggle('hidden', Boolean(authToken) && !allowed);
     });
@@ -325,6 +329,7 @@ function applyRoleUi() {
     if (authToken && currentPage !== 'wall') {
       const allowed =
         ((currentPage === 'overview' || currentPage === 'rooms') && userCan('rooms:view')) ||
+        (currentPage === 'reports' && userCan('sales:reports')) ||
         (currentPage === 'incidents' && userCan('incidents:view'));
       if (!allowed) switchPage('wall');
     }
@@ -332,16 +337,17 @@ function applyRoleUi() {
 }
 
 function switchPage(page) {
-  if (!['overview', 'wall', 'rooms', 'incidents'].includes(page)) return;
+  if (!['overview', 'wall', 'rooms', 'reports', 'incidents'].includes(page)) return;
   if (page !== 'wall' && !authToken) return;
   if ((page === 'overview' || page === 'rooms') && !userCan('rooms:view')) return;
+  if (page === 'reports' && !userCan('sales:reports')) return;
   if (page === 'incidents' && !userCan('incidents:view')) return;
 
   currentPage = page;
   fullscreenStreamId = null;
   document.body.classList.remove('focus-mode');
 
-  for (const name of ['overview', 'wall', 'rooms', 'incidents']) {
+  for (const name of ['overview', 'wall', 'rooms', 'reports', 'incidents']) {
     $(`${name}Page`).classList.toggle('hidden', name !== page);
   }
 
@@ -363,6 +369,7 @@ function renderCurrentPage() {
 
   if (currentPage === 'overview') renderOverview();
   if (currentPage === 'rooms') renderRooms();
+  if (currentPage === 'reports' && typeof renderReports === 'function') renderReports();
   if (currentPage === 'incidents') renderIncidents();
 }
 
