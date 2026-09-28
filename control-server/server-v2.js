@@ -30,12 +30,13 @@ function safeEqual(a, b) {
 
 function blankState() {
   return {
-    version: 3,
+    version: 4,
     agents: {},
     incidents: [],
     samples: {},
     removedDevices: [],
     media: [],
+    hitEvents: [],
     business: {},
     roomSettings: {}
   };
@@ -53,6 +54,7 @@ function loadState() {
       samples: saved.samples || {},
       removedDevices: Array.isArray(saved.removedDevices) ? saved.removedDevices : [],
       media: Array.isArray(saved.media) ? saved.media : [],
+      hitEvents: Array.isArray(saved.hitEvents) ? saved.hitEvents : [],
       business: saved.business && typeof saved.business === 'object' ? saved.business : {},
       roomSettings: saved.roomSettings && typeof saved.roomSettings === 'object' ? saved.roomSettings : {}
     };
@@ -560,24 +562,137 @@ function storeBusinessSnapshot(agent, body = {}) {
   return next;
 }
 
+function clipTimeLabel(value) {
+  const date = new Date(value || Date.now());
+  if (!Number.isFinite(date.getTime())) return String(value || '');
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      timeZoneName: 'short'
+    }).format(date);
+  } catch (_) {
+    return date.toISOString();
+  }
+}
+
+function clipHitSummary(media) {
+  const hit = media?.hit || null;
+  if (!hit) return 'Card: Waiting for hit metadata';
+  const type = hit.type === 'nuke' ? 'NUKE HIT' : hit.type === 'big' ? 'BIG HIT' : 'HIT';
+  const value = Number.isFinite(Number(hit.estimatedValue))
+    ? ` • Est. ${Number(hit.estimatedValue).toLocaleString()}`
+    : '';
+  return `${type}: ${hit.description || 'Card description unavailable'}${value}`;
+}
+
+function findBestHitForClip(roomId, createdAt, maxDeltaMs = 5 * 60 * 1000) {
+  const clipMs = Date.parse(createdAt || '');
+  if (!Number.isFinite(clipMs)) return null;
+
+  let best = null;
+  let bestDelta = Infinity;
+  for (const hit of state.hitEvents) {
+    if (hit.roomId !== roomId || hit.mediaId) continue;
+    const hitMs = Date.parse(hit.markedAt || '');
+    if (!Number.isFinite(hitMs)) continue;
+    const delta = Math.abs(hitMs - clipMs);
+    if (delta <= maxDeltaMs && delta < bestDelta) {
+      best = hit;
+      bestDelta = delta;
+    }
+  }
+  return best;
+}
+
+function attachHitToMedia(media, hit) {
+  if (!media || !hit) return false;
+  media.hit = {
+    id: hit.id,
+    type: hit.type,
+    description: hit.description,
+    estimatedValue: hit.estimatedValue,
+    markedAt: hit.markedAt,
+    markedBy: hit.markedBy,
+    orderId: hit.orderId,
+    username: hit.username,
+    teams: hit.teams,
+    breakTitle: hit.breakTitle,
+    streamTitle: hit.streamTitle,
+    streamName: hit.streamName,
+    platform: hit.platform
+  };
+  media.hitMatchedAt = nowIso();
+  hit.mediaId = media.id;
+  hit.matchedAt = nowIso();
+  return true;
+}
+
+function enrichMediaFromBusiness(media, agent) {
+  const business = businessForRoom(agent.roomId);
+  if (!business) return media;
+  media.platform = business.platform || '';
+  media.streamName = business.sourceStreamName || '';
+  media.streamTitle = business.streamTitle || '';
+  media.currentBreak = business.currentBreak || '';
+  media.viewersAtClip = Number.isFinite(Number(business.viewers)) ? Number(business.viewers) : null;
+  return media;
+}
+
+async function sendClipMetadataSlack(media) {
+  if (!SLACK_CLIP_WEBHOOK_URL || media.kind !== 'clip' || !media.hit) return;
+  const hit = media.hit;
+  const lines = [
+    `🃏 Clip Metadata Matched — ${media.roomName}`,
+    `Clip: ${media.fileName}`,
+    `Time: ${clipTimeLabel(media.createdAt)}`,
+    `Card: ${hit.description || 'Description unavailable'}`,
+    `Hit: ${hit.type === 'nuke' ? 'Nuke' : hit.type === 'big' ? 'Big' : 'Hit'}`,
+    hit.teams ? `Spot/Team: ${hit.teams}` : '',
+    hit.username ? `Buyer: ${hit.username}` : '',
+    hit.breakTitle ? `Break: ${hit.breakTitle}` : ''
+  ].filter(Boolean);
+
+  try {
+    const response = await fetch(SLACK_CLIP_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: lines.join('\n') })
+    });
+    if (!response.ok) console.error(`Slack clip metadata alert failed: HTTP ${response.status}`);
+  } catch (err) {
+    console.error('Slack clip metadata alert failed:', err.message);
+  }
+}
+
 async function sendClipSlack(media) {
   if (!SLACK_CLIP_WEBHOOK_URL || media.kind !== 'clip') return;
   const shadeLine = media.shadeVerified
     ? 'Shade: Saved ✓'
     : media.shadeAttempted
-      ? `Shade: Not confirmed ⚠`
+      ? 'Shade: Not confirmed ⚠'
       : 'Shade: Not attempted';
-  const text = [
-    `${media.roomName} — Clip Created`,
-    media.fileName,
+
+  const lines = [
+    `🎬 Clip Created — ${media.roomName}`,
+    `Time: ${clipTimeLabel(media.createdAt)}`,
+    media.streamName ? `Channel: ${media.streamName}${media.platform ? ` (${media.platform})` : ''}` : '',
+    media.currentBreak ? `Break: ${media.currentBreak}` : '',
+    clipHitSummary(media),
+    `File: ${media.fileName}`,
     `Local save: ${media.localSaved ? '✓' : '⚠'}`,
     shadeLine
-  ].join('\n');
+  ].filter(Boolean);
+
   try {
     const response = await fetch(SLACK_CLIP_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text })
+      body: JSON.stringify({ text: lines.join('\n') })
     });
     if (!response.ok) console.error(`Slack clip alert failed: HTTP ${response.status}`);
   } catch (err) {
@@ -756,11 +871,99 @@ async function ingestAgentMedia(req, res) {
     error: body.error ? String(body.error).slice(0, 500) : ''
   };
 
+  enrichMediaFromBusiness(media, agent);
+  if (kind === 'clip') {
+    const hit = findBestHitForClip(agent.roomId, media.createdAt);
+    if (hit) attachHitToMedia(media, hit);
+  }
+
   state.media.unshift(media);
   if (state.media.length > 10000) state.media.length = 10000;
   schedulePersist();
   sendClipSlack(media);
   return sendJson(res, 201, { ok: true, media });
+}
+
+async function ingestHitMetadata(req, res) {
+  if (!BUSINESS_INGEST_KEY) return sendJson(res, 503, { error: 'Business ingest is not configured.' });
+  if (!businessIngestAuthorized(req)) return sendJson(res, 401, { error: 'Invalid business ingest key.' });
+
+  const body = await readJson(req, 256 * 1024);
+  const streamName = String(body.streamName || '').trim();
+  const platform = String(body.platform || '').trim().toLowerCase();
+  const hitId = String(body.hitId || body.id || '').trim();
+
+  if (!streamName || !platform || !hitId) {
+    return sendJson(res, 400, { error: 'streamName, platform, and hitId are required.' });
+  }
+
+  const agent = resolveBusinessAgent(streamName, platform);
+  if (!agent) {
+    return sendJson(res, 404, {
+      error: 'No monitored room is mapped to this hit.',
+      streamName,
+      platform
+    });
+  }
+
+  const existing = state.hitEvents.find((item) => item.id === hitId);
+  if (existing) return sendJson(res, 200, { ok: true, hit: existing, duplicate: true });
+
+  const estimatedValue =
+    body.estimatedValue === null || body.estimatedValue === undefined || body.estimatedValue === ''
+      ? null
+      : (Number.isFinite(Number(body.estimatedValue)) ? Number(body.estimatedValue) : null);
+
+  const hit = {
+    id: hitId,
+    roomId: agent.roomId,
+    roomName: displayRoomName(agent),
+    streamName,
+    platform,
+    type: body.type === 'nuke' ? 'nuke' : body.type === 'big' ? 'big' : 'hit',
+    description: String(body.description || '').slice(0, 500),
+    estimatedValue,
+    markedAt: String(body.markedAt || nowIso()),
+    markedBy: String(body.markedBy || '').slice(0, 200),
+    orderId: String(body.orderId || '').slice(0, 200),
+    username: String(body.username || '').slice(0, 200),
+    teams: String(body.teams || '').slice(0, 300),
+    breakTitle: String(body.breakTitle || '').slice(0, 300),
+    streamTitle: String(body.streamTitle || '').slice(0, 300),
+    createdAt: nowIso(),
+    mediaId: ''
+  };
+
+  state.hitEvents.unshift(hit);
+  if (state.hitEvents.length > 5000) state.hitEvents.length = 5000;
+
+  const hitMs = Date.parse(hit.markedAt);
+  let bestMedia = null;
+  let bestDelta = Infinity;
+  if (Number.isFinite(hitMs)) {
+    for (const media of state.media) {
+      if (media.kind !== 'clip' || media.roomId !== agent.roomId || media.hit) continue;
+      const clipMs = Date.parse(media.createdAt || '');
+      if (!Number.isFinite(clipMs)) continue;
+      const delta = Math.abs(clipMs - hitMs);
+      if (delta <= 5 * 60 * 1000 && delta < bestDelta) {
+        bestMedia = media;
+        bestDelta = delta;
+      }
+    }
+  }
+
+  if (bestMedia) {
+    attachHitToMedia(bestMedia, hit);
+    sendClipMetadataSlack(bestMedia);
+  }
+
+  schedulePersist();
+  return sendJson(res, 201, {
+    ok: true,
+    hit,
+    matchedClipId: bestMedia?.id || null
+  });
 }
 
 async function updateRoomSettings(req, res, roomId) {
@@ -889,6 +1092,10 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && url.pathname === '/api/business/ingest') {
       return ingestBusinessByChannel(req, res);
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/business/hits') {
+      return ingestHitMetadata(req, res);
     }
 
     if (req.method === 'POST' && url.pathname.startsWith('/api/business/rooms/')) {
