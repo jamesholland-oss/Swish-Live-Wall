@@ -152,7 +152,11 @@ function createGoogleWorkspaceAuth(options = {}) {
         throw new Error('Use your company Google Workspace account.');
       }
 
-      const user = options.getUserByEmail?.(email) || null;
+      const user = options.getUserByEmail?.(email, {
+        name: String(payload.name || '').trim(),
+        picture: String(payload.picture || '').trim(),
+        hostedDomain
+      }) || null;
       if (!user) {
         flow.status = 'denied';
         flow.error = 'Your account has not been assigned Swish Control access.';
