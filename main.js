@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, net } = require('electron');
+const { app, BrowserWindow, ipcMain, session, net, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { startAgent } = require('./agent/agent');
@@ -323,6 +323,14 @@ function registerIpc() {
   ipcMain.handle('streams:save', (_event, streams) => saveStreams(streams));
   ipcMain.handle('app:get-config', () => loadAppConfig());
   ipcMain.handle('control:fetch', (_event, request) => controlFetch(request));
+  ipcMain.handle('app:open-external', async (_event, rawUrl) => {
+    const url = new URL(String(rawUrl || ''));
+    if (url.protocol !== 'https:' || url.hostname !== 'accounts.google.com') {
+      throw new Error('External sign-in URL was blocked.');
+    }
+    await shell.openExternal(url.href);
+    return true;
+  });
   ipcMain.handle('app:save-config', (_event, patch) => {
     const allowed = {
       role: ['wall', 'control', 'agent'].includes(patch?.role) ? patch.role : (patch?.role === '' ? '' : undefined),
