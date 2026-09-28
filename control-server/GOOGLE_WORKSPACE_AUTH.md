@@ -85,3 +85,25 @@ Existing password users can keep a `password` property in the same object.
 6. Role permissions are enforced by the backend as well as the UI.
 
 The Google client secret remains only on Railway; it is never embedded in the desktop app.
+
+
+## Company-wide access model
+
+For normal company rollout, do not maintain every employee in `CONTROL_USERS_JSON`.
+
+- Keep only one or two break-glass / bootstrap administrators in `CONTROL_USERS_JSON`.
+- Any verified user in `GOOGLE_WORKSPACE_DOMAIN` can sign in.
+- New Workspace users receive `GOOGLE_DEFAULT_ROLE`; if unset, the safe default is `viewer`.
+- Administrators manage employees from Swish Control → Users & Access.
+- Role changes and disables are stored in the persistent Swish Control state volume, not Railway environment variables.
+- Explicitly disabled users remain blocked even though they are still members of the Workspace domain.
+
+Optional Railway variable:
+
+```text
+GOOGLE_DEFAULT_ROLE=viewer
+```
+
+Use `content` instead if every employee should start with rooms + clips access.
+
+For larger organizations, Google Group → Swish role synchronization can be layered on later so department membership drives roles automatically.
