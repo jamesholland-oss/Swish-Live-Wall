@@ -625,3 +625,134 @@ body.room-focus-mode .room-live-layout .room-video-stage {
   color: var(--text);
   opacity: .86;
 }
+
+
+.access-root {
+  padding: 14px;
+}
+
+.access-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.access-head h1 {
+  margin: 4px 0 0;
+  font-family: 'Michroma', sans-serif;
+  font-size: 23px;
+  font-weight: 400;
+}
+
+.access-head p {
+  max-width: 760px;
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.access-add-card,
+.access-table-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #090d13;
+}
+
+.access-add-card {
+  margin-bottom: 10px;
+}
+
+.access-add-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.25fr) minmax(180px, 1fr) minmax(150px, .7fr) auto;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.access-add-grid input,
+.access-add-grid select,
+.access-role-select {
+  min-height: 36px;
+  padding: 8px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: #070a0f;
+  color: var(--text);
+  font: inherit;
+}
+
+.access-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.access-table th,
+.access-table td {
+  padding: 10px 9px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.access-table th {
+  color: var(--muted);
+  font-family: 'Michroma', sans-serif;
+  font-size: 7px;
+  font-weight: 400;
+  letter-spacing: .05em;
+}
+
+.access-table td:first-child strong,
+.access-table td:first-child span {
+  display: block;
+}
+
+.access-table td:first-child span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.access-status,
+.access-fixed {
+  display: inline-flex;
+  align-items: center;
+  min-width: 52px;
+  justify-content: center;
+  padding: 4px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  font-family: 'Michroma', sans-serif;
+  font-size: 6px;
+}
+
+.access-status.active {
+  color: var(--green);
+  border-color: rgba(60, 220, 130, .35);
+}
+
+.access-status.disabled {
+  color: var(--muted);
+}
+
+.access-fixed {
+  color: var(--muted);
+}
+
+.access-loading {
+  padding: 30px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 10px;
+}
+
+@media (max-width: 1100px) {
+  .access-add-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
