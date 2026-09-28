@@ -12,6 +12,8 @@ const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
 const SLACK_WEBHOOK_URL = String(process.env.SLACK_WEBHOOK_URL || '');
 const SLACK_CLIP_WEBHOOK_URL = String(process.env.SLACK_CLIP_WEBHOOK_URL || '');
 const BUSINESS_INGEST_KEY = String(process.env.BUSINESS_INGEST_KEY || '');
+const GOOGLE_WORKSPACE_DOMAIN = String(process.env.GOOGLE_WORKSPACE_DOMAIN || '').trim().toLowerCase();
+const GOOGLE_DEFAULT_ROLE_RAW = String(process.env.GOOGLE_DEFAULT_ROLE || 'viewer').trim().toLowerCase();
 const SESSION_HOURS = Math.max(1, Number(process.env.CONTROL_SESSION_HOURS || 12));
 const OFFLINE_AFTER_MS = Math.max(15000, Number(process.env.OFFLINE_AFTER_MS || 30000));
 const SAMPLE_INTERVAL_MS = Math.max(60000, Number(process.env.SAMPLE_INTERVAL_MS || 300000));
@@ -31,7 +33,7 @@ function safeEqual(a, b) {
 
 function blankState() {
   return {
-    version: 4,
+    version: 5,
     agents: {},
     incidents: [],
     samples: {},
@@ -39,7 +41,8 @@ function blankState() {
     media: [],
     hitEvents: [],
     business: {},
-    roomSettings: {}
+    roomSettings: {},
+    userAccess: {}
   };
 }
 
@@ -57,7 +60,8 @@ function loadState() {
       media: Array.isArray(saved.media) ? saved.media : [],
       hitEvents: Array.isArray(saved.hitEvents) ? saved.hitEvents : [],
       business: saved.business && typeof saved.business === 'object' ? saved.business : {},
-      roomSettings: saved.roomSettings && typeof saved.roomSettings === 'object' ? saved.roomSettings : {}
+      roomSettings: saved.roomSettings && typeof saved.roomSettings === 'object' ? saved.roomSettings : {},
+      userAccess: saved.userAccess && typeof saved.userAccess === 'object' ? saved.userAccess : {}
     };
   } catch (_) {
     return blankState();
@@ -98,6 +102,12 @@ const ROLE_PERMISSIONS = {
 function normalizeRole(value) {
   const role = String(value || '').trim().toLowerCase();
   return Object.prototype.hasOwnProperty.call(ROLE_PERMISSIONS, role) ? role : 'admin';
+}
+
+function googleDefaultRole() {
+  return Object.prototype.hasOwnProperty.call(ROLE_PERMISSIONS, GOOGLE_DEFAULT_ROLE_RAW)
+    ? GOOGLE_DEFAULT_ROLE_RAW
+    : 'viewer';
 }
 
 function permissionsForRole(role, extra = []) {
@@ -153,11 +163,188 @@ function parseUsers() {
 }
 
 const users = parseUsers();
+
+function workspaceEmailAllowed(email) {
+  const normalized = String(email || '').trim().toLowerCase();
+  if (!normalized || !GOOGLE_WORKSPACE_DOMAIN) return false;
+  return normalized.endsWith(`@${GOOGLE_WORKSPACE_DOMAIN}`);
+}
+
+function resolveGoogleControlUser(email, profile = {}) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const configured = users.find((user) => user.email === normalizedEmail);
+  if (configured) return configured;
+
+  if (!workspaceEmailAllowed(normalizedEmail)) return null;
+
+  const existing = state.userAccess[normalizedEmail];
+  if (existing?.enabled === false) return null;
+
+  const role = normalizeRole(existing?.role || googleDefaultRole());
+  const name = String(existing?.name || profile.name || normalizedEmail).trim();
+  const now = nowIso();
+
+  state.userAccess[normalizedEmail] = {
+    email: normalizedEmail,
+    name,
+    role,
+    enabled: true,
+    source: existing?.source || 'workspace',
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    lastLoginAt: now
+  };
+  schedulePersist();
+
+  return {
+    email: normalizedEmail,
+    name,
+    password: '',
+    role,
+    permissions: permissionsForRole(role)
+  };
+}
+
 const googleAuth = createGoogleWorkspaceAuth({
-  getUserByEmail: (email) => users.find((user) => user.email === String(email || '').trim().toLowerCase()) || null,
+  getUserByEmail: resolveGoogleControlUser,
   createSession,
   publicUser
 });
+
+function accessUserPublic(entry) {
+  if (!entry) return null;
+  const role = normalizeRole(entry.role);
+  return {
+    email: String(entry.email || '').trim().toLowerCase(),
+    name: String(entry.name || entry.email || '').trim(),
+    role,
+    enabled: entry.enabled !== false,
+    source: entry.source || 'workspace',
+    createdAt: entry.createdAt || null,
+    updatedAt: entry.updatedAt || null,
+    lastLoginAt: entry.lastLoginAt || null,
+    permissions: permissionsForRole(role)
+  };
+}
+
+function managedAccessUsers() {
+  const map = new Map();
+
+  for (const user of users) {
+    map.set(user.email, {
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      enabled: true,
+      source: 'environment',
+      createdAt: null,
+      updatedAt: null,
+      lastLoginAt: null,
+      permissions: user.permissions
+    });
+  }
+
+  for (const entry of Object.values(state.userAccess || {})) {
+    if (!entry?.email || map.has(entry.email)) continue;
+    map.set(entry.email, accessUserPublic(entry));
+  }
+
+  return [...map.values()].sort((a, b) =>
+    String(a.name || a.email).localeCompare(String(b.name || b.email))
+  );
+}
+
+function refreshSessionsForAccess(email, entry) {
+  for (const [token, session] of sessions) {
+    if (session.email !== email) continue;
+    if (!entry || entry.enabled === false) {
+      sessions.delete(token);
+      continue;
+    }
+    const role = normalizeRole(entry.role);
+    session.name = entry.name || session.name;
+    session.role = role;
+    session.permissions = permissionsForRole(role);
+  }
+}
+
+async function upsertAccessUser(req, res) {
+  const admin = requirePermission(req, res, 'users:manage');
+  if (!admin) return;
+
+  const body = await readJson(req, 128 * 1024);
+  const email = String(body.email || '').trim().toLowerCase();
+  if (!workspaceEmailAllowed(email)) {
+    return sendJson(res, 400, { error: 'User email must belong to the configured Google Workspace domain.' });
+  }
+
+  if (users.some((user) => user.email === email)) {
+    return sendJson(res, 409, { error: 'This user is managed by CONTROL_USERS_JSON and cannot be edited here.' });
+  }
+
+  const requestedRole = String(body.role || googleDefaultRole()).trim().toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(ROLE_PERMISSIONS, requestedRole)) {
+    return sendJson(res, 400, { error: 'Unknown role.' });
+  }
+
+  const existing = state.userAccess[email] || {};
+  const now = nowIso();
+  const entry = {
+    email,
+    name: String(body.name || existing.name || email).trim().slice(0, 160),
+    role: requestedRole,
+    enabled: body.enabled !== false,
+    source: existing.source || 'admin',
+    createdAt: existing.createdAt || now,
+    updatedAt: now,
+    lastLoginAt: existing.lastLoginAt || null,
+    updatedBy: admin.email
+  };
+
+  state.userAccess[email] = entry;
+  schedulePersist();
+  refreshSessionsForAccess(email, entry);
+  return sendJson(res, 200, { ok: true, user: accessUserPublic(entry) });
+}
+
+async function removeAccessUser(req, res, emailValue) {
+  const admin = requirePermission(req, res, 'users:manage');
+  if (!admin) return;
+
+  const email = String(emailValue || '').trim().toLowerCase();
+  if (users.some((user) => user.email === email)) {
+    return sendJson(res, 409, { error: 'This user is managed by CONTROL_USERS_JSON and cannot be removed here.' });
+  }
+
+  const existing = state.userAccess[email];
+  if (!existing) return sendJson(res, 404, { error: 'User access record not found.' });
+
+  // A removed Workspace user would otherwise inherit the company default again.
+  // Persist a disabled record so explicit revocation wins over default access.
+  const entry = {
+    ...existing,
+    email,
+    enabled: false,
+    updatedAt: nowIso(),
+    updatedBy: admin.email
+  };
+  state.userAccess[email] = entry;
+  schedulePersist();
+  refreshSessionsForAccess(email, entry);
+  return sendJson(res, 200, { ok: true, user: accessUserPublic(entry) });
+}
+
+function accessUsersResponse(req, res) {
+  const admin = requirePermission(req, res, 'users:manage');
+  if (!admin) return;
+
+  return sendJson(res, 200, {
+    workspaceDomain: GOOGLE_WORKSPACE_DOMAIN,
+    defaultRole: googleDefaultRole(),
+    roles: Object.keys(ROLE_PERMISSIONS),
+    users: managedAccessUsers()
+  });
+}
 
 function corsHeaders() {
   return {
@@ -1113,6 +1300,18 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname.startsWith('/api/business/rooms/')) {
       const roomId = decodeURIComponent(url.pathname.slice('/api/business/rooms/'.length));
       return ingestBusiness(req, res, roomId);
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/access/users') {
+      return accessUsersResponse(req, res);
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/access/users') {
+      return upsertAccessUser(req, res);
+    }
+
+    if (req.method === 'DELETE' && url.pathname.startsWith('/api/access/users/')) {
+      return removeAccessUser(req, res, decodeURIComponent(url.pathname.slice('/api/access/users/'.length)));
     }
 
     if (req.method === 'GET' && url.pathname === '/api/me') {
