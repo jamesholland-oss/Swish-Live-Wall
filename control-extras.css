@@ -611,3 +611,17 @@ body.room-focus-mode .room-live-layout .room-video-stage {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+
+.recent-media-main {
+  min-width: 0;
+}
+
+.recent-media-row .clip-file-name {
+  opacity: .72;
+}
+
+.recent-media-row .clip-break-name {
+  color: var(--text);
+  opacity: .86;
+}
