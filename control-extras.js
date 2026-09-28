@@ -374,9 +374,17 @@ function renderRecentMedia(room) {
     <div class="recent-media-list">
       ${clips.length ? clips.map((clip) => `
         <div class="recent-media-row">
-          <div>
-            <strong>${escapeHtml(clip.fileName || 'Replay')}</strong>
-            <span>${escapeHtml(formatDateTime(clip.createdAt))}</span>
+          <div class="recent-media-main">
+            <strong>${escapeHtml(clip.hit?.description || clip.fileName || 'Replay')}</strong>
+            <span>
+              ${escapeHtml(formatDateTime(clip.createdAt))}
+              ${clip.hit?.type ? ` • ${escapeHtml(String(clip.hit.type).toUpperCase())} HIT` : ''}
+              ${clip.hit?.teams ? ` • ${escapeHtml(clip.hit.teams)}` : ''}
+            </span>
+            <span class="clip-file-name">${escapeHtml(clip.fileName || 'Replay')}</span>
+            ${clip.hit?.breakTitle || clip.currentBreak ? `
+              <span class="clip-break-name">${escapeHtml(clip.hit?.breakTitle || clip.currentBreak)}</span>
+            ` : ''}
           </div>
           <div class="media-status ${clip.shadeVerified ? 'ok' : 'warn'}">
             ${clip.shadeVerified ? 'SHADE ✓' : clip.shadeAttempted ? 'SHADE ⚠' : 'LOCAL'}
