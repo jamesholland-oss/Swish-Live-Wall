@@ -683,6 +683,7 @@ async function sendClipSlack(media) {
     media.streamName ? `Channel: ${media.streamName}${media.platform ? ` (${media.platform})` : ''}` : '',
     media.currentBreak ? `Break: ${media.currentBreak}` : '',
     clipHitSummary(media),
+    media.trigger ? `Trigger: ${media.trigger === 'obs-replay-buffer' ? 'Replay Buffer' : media.trigger}` : '',
     `File: ${media.fileName}`,
     `Local save: ${media.localSaved ? '✓' : '⚠'}`,
     shadeLine
@@ -868,7 +869,8 @@ async function ingestAgentMedia(req, res) {
     shadeAttempted: Boolean(body.shadeAttempted),
     shadeVerified: Boolean(body.shadeVerified),
     shadePath: body.shadePath ? String(body.shadePath) : '',
-    error: body.error ? String(body.error).slice(0, 500) : ''
+    error: body.error ? String(body.error).slice(0, 500) : '',
+    trigger: String(body.trigger || '').slice(0, 80)
   };
 
   enrichMediaFromBusiness(media, agent);
