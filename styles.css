@@ -225,3 +225,46 @@ th { position: sticky; top: 0; z-index: 1; background: var(--panel); color: var(
   .rooms-layout { grid-template-columns: 220px minmax(0, 1fr); }
   .stream-editor-row { grid-template-columns: 50px 150px minmax(260px, 1fr) 100px 130px 30px; }
 }
+
+
+.google-login-btn {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: #111;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.google-login-btn:hover {
+  filter: brightness(.96);
+}
+
+.google-login-btn:disabled {
+  opacity: .6;
+  cursor: wait;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
