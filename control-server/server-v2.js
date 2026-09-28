@@ -88,6 +88,7 @@ const ROLE_PERMISSIONS = {
     'users:manage', 'settings:manage'
   ],
   business: ['wall:view', 'rooms:view', 'clips:view', 'sales:view', 'sales:reports'],
+  content: ['wall:view', 'rooms:view', 'clips:view'],
   ops: ['wall:view', 'rooms:view', 'technical:view', 'incidents:view', 'diagnostics:request', 'clips:view'],
   viewer: ['wall:view', 'rooms:view'],
   wall_only: ['wall:view']
