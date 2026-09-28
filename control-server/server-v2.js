@@ -3,6 +3,7 @@ const { URL } = require('url');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { createGoogleWorkspaceAuth } = require('./google-auth');
 
 const PORT = Number(process.env.PORT || 8787);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -144,7 +145,7 @@ function parseUsers() {
         role,
         permissions: permissionsForRole(role, user.permissions)
       };
-    }).filter((user) => user.email && user.password) : [];
+    }).filter((user) => user.email) : [];
   } catch (err) {
     console.error('CONTROL_USERS_JSON invalid:', err.message);
     return [];
@@ -152,6 +153,11 @@ function parseUsers() {
 }
 
 const users = parseUsers();
+const googleAuth = createGoogleWorkspaceAuth({
+  getUserByEmail: (email) => users.find((user) => user.email === String(email || '').trim().toLowerCase()) || null,
+  createSession,
+  publicUser
+});
 
 function corsHeaders() {
   return {
@@ -770,7 +776,7 @@ async function login(req, res) {
   const email = String(body.email || '').trim().toLowerCase();
   const password = String(body.password || '');
   const user = users.find((candidate) => candidate.email === email);
-  if (!user || !safeEqual(user.password, password)) return sendJson(res, 401, { error: 'Invalid email or password.' });
+  if (!user || !user.password || !safeEqual(user.password, password)) return sendJson(res, 401, { error: 'Invalid email or password.' });
   const token = createSession(user);
   return sendJson(res, 200, { token, expiresInSeconds: SESSION_HOURS * 3600, user: publicUser(user) });
 }
@@ -1082,6 +1088,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/health') {
       return sendJson(res, 200, { ok: true, rooms: Object.keys(state.agents).length, time: nowIso() });
     }
+    if (req.method === 'POST' && url.pathname === '/api/auth/google/start') return googleAuth.start(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/auth/google/callback') return googleAuth.callback(req, res, url);
+    if (req.method === 'GET' && url.pathname === '/api/auth/google/status') return googleAuth.status(req, res, url);
     if (req.method === 'POST' && url.pathname === '/api/login') return login(req, res);
     if (req.method === 'POST' && url.pathname === '/api/agent/enroll') return enroll(req, res);
     if (req.method === 'POST' && url.pathname === '/api/agent/heartbeat') return heartbeat(req, res);
