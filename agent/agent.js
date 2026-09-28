@@ -474,7 +474,6 @@ function startAgent(options = {}) {
   async function reportMedia(kind, sourcePath) {
     const fileName = path.basename(String(sourcePath || ''));
     if (!fileName) return;
-    if (kind === 'clip' && !/^replay/i.test(fileName)) return;
 
     const stableStat = await waitForStableFile(sourcePath);
     if (!stableStat) {
@@ -515,7 +514,8 @@ function startAgent(options = {}) {
           shadeAttempted: shade.attempted,
           shadeVerified: shade.verified,
           shadePath: shade.destinationPath || '',
-          error: shade.error || ''
+          error: shade.error || '',
+          trigger: kind === 'clip' ? 'obs-replay-buffer' : 'obs-recording'
         })
       });
       if (!response.ok) console.error(`[Swish Agent] Media event upload failed (${response.status})`);
