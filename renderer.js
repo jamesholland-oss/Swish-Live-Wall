@@ -50,6 +50,7 @@ const els = {
   setupBackBtn: $('setupBackBtn'),
   setupSaveBtn: $('setupSaveBtn'),
   loginModal: $('loginModal'),
+  googleLoginBtn: $('googleLoginBtn'),
   loginEmail: $('loginEmail'),
   loginPassword: $('loginPassword'),
   loginError: $('loginError'),
@@ -860,6 +861,65 @@ function closeLogin() {
   els.loginPassword.value = '';
 }
 
+async function signInWithGoogle() {
+  els.loginError.classList.add('hidden');
+  els.loginError.textContent = '';
+  els.googleLoginBtn.disabled = true;
+  const originalLabel = els.googleLoginBtn.textContent;
+  els.googleLoginBtn.textContent = 'Opening Google…';
+
+  try {
+    const start = await fetchJson('/api/auth/google/start', {
+      method: 'POST',
+      auth: false,
+      body: JSON.stringify({})
+    }, 7000);
+
+    if (!start?.authUrl || !start?.flowId) {
+      throw new Error('Google sign-in could not be started.');
+    }
+
+    await window.swish.openExternal(start.authUrl);
+    els.googleLoginBtn.textContent = 'Waiting for Google…';
+
+    const deadline = Date.now() + 2 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const status = await fetchJson(
+        `/api/auth/google/status?flowId=${encodeURIComponent(start.flowId)}`,
+        { auth: false },
+        5000
+      );
+
+      if (status?.status === 'pending') continue;
+
+      if (status?.status === 'complete' && status.token && status.user) {
+        authToken = status.token;
+        authUser = status.user;
+        if (typeof saveControlSession === 'function') saveControlSession(authToken, authUser);
+        els.profileBtn.textContent = (authUser?.name || authUser?.email || 'U').trim().charAt(0).toUpperCase();
+        els.profileBtn.title = `${authUser?.name || authUser?.email || 'Control user'} · ${authUser?.role || 'user'} — click to sign out`;
+        closeLogin();
+        applyRoleUi();
+        startPolling();
+        await refreshControlData();
+        switchPage(userCan('rooms:view') ? 'overview' : 'wall');
+        return;
+      }
+
+      throw new Error(status?.error || 'Google sign-in failed.');
+    }
+
+    throw new Error('Google sign-in timed out. Try again.');
+  } catch (err) {
+    els.loginError.textContent = err.message;
+    els.loginError.classList.remove('hidden');
+  } finally {
+    els.googleLoginBtn.disabled = false;
+    els.googleLoginBtn.textContent = originalLabel;
+  }
+}
+
 async function signIn() {
   const email = els.loginEmail.value.trim();
   const password = els.loginPassword.value;
@@ -959,6 +1019,7 @@ function bindEvents() {
   els.signInBtn.addEventListener('click', openLogin);
   els.profileBtn.addEventListener('click', signOut);
   els.loginCancelBtn.addEventListener('click', closeLogin);
+  els.googleLoginBtn.addEventListener('click', signInWithGoogle);
   els.loginSubmitBtn.addEventListener('click', signIn);
   els.loginPassword.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') signIn();
