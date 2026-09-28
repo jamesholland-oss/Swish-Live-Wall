@@ -47,6 +47,230 @@ fetchJson = async function fetchJsonWithSessionPersistence(pathname, options = {
   }
 };
 
+let accessPageEl = null;
+let accessRootEl = null;
+let accessNavBtn = null;
+
+function ensureAccessUi() {
+  if (!accessPageEl) {
+    accessPageEl = document.getElementById('accessPage');
+    if (!accessPageEl) {
+      accessPageEl = document.createElement('section');
+      accessPageEl.id = 'accessPage';
+      accessPageEl.className = 'page hidden';
+      accessRootEl = document.createElement('div');
+      accessRootEl.id = 'accessRoot';
+      accessRootEl.className = 'access-root';
+      accessPageEl.append(accessRootEl);
+      document.getElementById('appRoot')?.append(accessPageEl);
+    } else {
+      accessRootEl = accessPageEl.querySelector('#accessRoot');
+    }
+  }
+
+  if (!accessNavBtn) {
+    accessNavBtn = document.querySelector('.nav-btn[data-page="access"]');
+    if (!accessNavBtn && els.techNav) {
+      accessNavBtn = document.createElement('button');
+      accessNavBtn.className = 'nav-btn';
+      accessNavBtn.dataset.page = 'access';
+      accessNavBtn.textContent = 'Users & Access';
+      els.techNav.append(accessNavBtn);
+      accessNavBtn.addEventListener('click', () => switchPage('access'));
+    }
+  }
+
+  if (accessNavBtn) {
+    accessNavBtn.classList.toggle('hidden', !authToken || !userCan('users:manage'));
+  }
+}
+
+async function renderAccessUsers() {
+  ensureAccessUi();
+  if (!accessRootEl || !userCan('users:manage')) return;
+
+  accessRootEl.innerHTML = '<div class="access-loading">Loading access…</div>';
+
+  try {
+    const data = await fetchJson('/api/access/users');
+    const roles = Array.isArray(data.roles) ? data.roles : [];
+    const users = Array.isArray(data.users) ? data.users : [];
+    const roleOptions = roles.map((role) =>
+      `<option value="${escapeHtml(role)}">${escapeHtml(role.replaceAll('_', ' '))}</option>`
+    ).join('');
+
+    accessRootEl.innerHTML = `
+      <div class="access-head">
+        <div>
+          <div class="eyebrow">WORKSPACE ACCESS</div>
+          <h1>Users & Access</h1>
+          <p>Anyone in <strong>${escapeHtml(data.workspaceDomain || 'your Workspace')}</strong> can sign in with the company Google account. New users start as <strong>${escapeHtml(data.defaultRole || 'viewer')}</strong>.</p>
+        </div>
+      </div>
+
+      <section class="access-add-card">
+        <div class="room-panel-head">
+          <span>ASSIGN ACCESS BEFORE FIRST LOGIN</span>
+          <small>Optional — employees also appear here automatically after first sign-in.</small>
+        </div>
+        <div class="access-add-grid">
+          <input id="accessEmailInput" type="email" placeholder="employee@${escapeHtml(data.workspaceDomain || 'company.com')}" />
+          <input id="accessNameInput" type="text" placeholder="Name" />
+          <select id="accessRoleInput">${roleOptions}</select>
+          <button id="accessAddBtn" class="primary">Add User</button>
+        </div>
+        <div id="accessError" class="form-error hidden"></div>
+      </section>
+
+      <section class="access-table-card">
+        <div class="room-panel-head">
+          <span>COMPANY ACCESS</span>
+          <small>${users.length} account${users.length === 1 ? '' : 's'}</small>
+        </div>
+        <div class="table-wrap">
+          <table class="access-table">
+            <thead>
+              <tr><th>User</th><th>Role</th><th>Status</th><th>Last Login</th><th>Source</th><th></th></tr>
+            </thead>
+            <tbody>
+              ${users.length ? users.map((user) => `
+                <tr data-access-email="${escapeHtml(user.email)}">
+                  <td>
+                    <strong>${escapeHtml(user.name || user.email)}</strong>
+                    <span>${escapeHtml(user.email)}</span>
+                  </td>
+                  <td>
+                    <select class="access-role-select" ${user.source === 'environment' ? 'disabled' : ''}>
+                      ${roles.map((role) => `<option value="${escapeHtml(role)}" ${role === user.role ? 'selected' : ''}>${escapeHtml(role.replaceAll('_', ' '))}</option>`).join('')}
+                    </select>
+                  </td>
+                  <td><span class="access-status ${user.enabled === false ? 'disabled' : 'active'}">${user.enabled === false ? 'DISABLED' : 'ACTIVE'}</span></td>
+                  <td>${escapeHtml(user.lastLoginAt ? formatDateTime(user.lastLoginAt) : 'Never')}</td>
+                  <td>${escapeHtml(user.source === 'environment' ? 'Railway fallback' : 'Workspace')}</td>
+                  <td>
+                    ${user.source === 'environment'
+                      ? '<span class="access-fixed">FIXED</span>'
+                      : `<button class="ghost access-save-btn">Save</button>
+                         <button class="ghost access-toggle-btn">${user.enabled === false ? 'Enable' : 'Disable'}</button>`}
+                  </td>
+                </tr>
+              `).join('') : '<tr><td colspan="6" class="empty-cell">No Workspace employees have signed in yet.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    `;
+
+    const errorEl = accessRootEl.querySelector('#accessError');
+    const showError = (message) => {
+      if (!errorEl) return;
+      errorEl.textContent = message;
+      errorEl.classList.remove('hidden');
+    };
+
+    accessRootEl.querySelector('#accessAddBtn')?.addEventListener('click', async () => {
+      const email = accessRootEl.querySelector('#accessEmailInput')?.value.trim();
+      const name = accessRootEl.querySelector('#accessNameInput')?.value.trim();
+      const role = accessRootEl.querySelector('#accessRoleInput')?.value;
+      if (!email) return showError('Enter a company email address.');
+      try {
+        await fetchJson('/api/access/users', {
+          method: 'POST',
+          body: JSON.stringify({ email, name, role, enabled: true })
+        });
+        await renderAccessUsers();
+      } catch (err) {
+        showError(err.message);
+      }
+    });
+
+    accessRootEl.querySelectorAll('tr[data-access-email]').forEach((row) => {
+      const email = row.dataset.accessEmail;
+      const roleSelect = row.querySelector('.access-role-select');
+
+      row.querySelector('.access-save-btn')?.addEventListener('click', async () => {
+        try {
+          await fetchJson('/api/access/users', {
+            method: 'POST',
+            body: JSON.stringify({
+              email,
+              name: row.querySelector('td strong')?.textContent || email,
+              role: roleSelect?.value,
+              enabled: true
+            })
+          });
+          await renderAccessUsers();
+        } catch (err) {
+          showError(err.message);
+        }
+      });
+
+      row.querySelector('.access-toggle-btn')?.addEventListener('click', async (event) => {
+        try {
+          const disabling = event.currentTarget.textContent.trim() === 'Disable';
+          if (disabling) {
+            await fetchJson(`/api/access/users/${encodeURIComponent(email)}`, {
+              method: 'DELETE'
+            });
+          } else {
+            await fetchJson('/api/access/users', {
+              method: 'POST',
+              body: JSON.stringify({
+                email,
+                name: row.querySelector('td strong')?.textContent || email,
+                role: roleSelect?.value || 'viewer',
+                enabled: true
+              })
+            });
+          }
+          await renderAccessUsers();
+        } catch (err) {
+          showError(err.message);
+        }
+      });
+    });
+  } catch (err) {
+    accessRootEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+const baseSwitchPageForAccess = switchPage;
+switchPage = function switchPageWithAccess(page) {
+  if (page !== 'access') return baseSwitchPageForAccess(page);
+  if (!authToken || !userCan('users:manage')) return;
+
+  ensureAccessUi();
+  currentPage = 'access';
+  fullscreenStreamId = null;
+  document.body.classList.remove('focus-mode', 'room-focus-mode');
+
+  for (const name of ['overview', 'wall', 'rooms', 'reports', 'incidents']) {
+    document.getElementById(`${name}Page`)?.classList.add('hidden');
+  }
+  accessPageEl?.classList.remove('hidden');
+
+  document.querySelectorAll('.nav-btn').forEach((button) => {
+    button.classList.toggle('active', button.dataset.page === 'access');
+  });
+
+  if (els.wallGrid) els.wallGrid.innerHTML = '';
+  restorePortaledWallStream?.();
+  wallViews?.().forEach(pauseView);
+  renderAccessUsers();
+};
+
+const baseApplyRoleUiForAccess = applyRoleUi;
+applyRoleUi = function applyRoleUiWithAccess() {
+  baseApplyRoleUiForAccess();
+  ensureAccessUi();
+
+  if (currentPage === 'access' && (!authToken || !userCan('users:manage'))) {
+    baseSwitchPageForAccess('wall');
+  }
+};
+
+ensureAccessUi();
+
 const serverStateEl = document.getElementById('serverState');
 const serverStateTextEl = document.getElementById('serverStateText');
 
