@@ -12,8 +12,6 @@ const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
 const SLACK_WEBHOOK_URL = String(process.env.SLACK_WEBHOOK_URL || '');
 const SLACK_CLIP_WEBHOOK_URL = String(process.env.SLACK_CLIP_WEBHOOK_URL || '');
 const BUSINESS_INGEST_KEY = String(process.env.BUSINESS_INGEST_KEY || '');
-const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || '').trim();
-const OPENAI_VISION_MODEL = String(process.env.OPENAI_VISION_MODEL || 'gpt-5.6-luna').trim();
 const GOOGLE_WORKSPACE_DOMAIN = String(process.env.GOOGLE_WORKSPACE_DOMAIN || '').trim().toLowerCase();
 const GOOGLE_DEFAULT_ROLE_RAW = String(process.env.GOOGLE_DEFAULT_ROLE || 'viewer').trim().toLowerCase();
 const SESSION_HOURS = Math.max(1, Number(process.env.CONTROL_SESSION_HOURS || 12));
@@ -776,119 +774,6 @@ function clipTimeLabel(value) {
   }
 }
 
-function normalizeVisionFrames(rawFrames) {
-  if (!Array.isArray(rawFrames)) return [];
-  return rawFrames.slice(0, 4).map((frame) => {
-    const mimeType = String(frame?.mimeType || '').toLowerCase();
-    const data = String(frame?.data || '');
-    const atSeconds = Number(frame?.atSeconds);
-    if (!['image/jpeg', 'image/png'].includes(mimeType)) return null;
-    if (!data || data.length > 450000 || !/^[a-z0-9+/=]+$/i.test(data)) return null;
-    return {
-      mimeType,
-      data,
-      atSeconds: Number.isFinite(atSeconds) ? atSeconds : null
-    };
-  }).filter(Boolean);
-}
-
-function openAiResponseText(payload) {
-  const parts = [];
-  for (const output of Array.isArray(payload?.output) ? payload.output : []) {
-    for (const item of Array.isArray(output?.content) ? output.content : []) {
-      if (item?.type === 'output_text' && item.text) parts.push(String(item.text));
-    }
-  }
-  return parts.join('\n').trim();
-}
-
-function parsePlayerRecognition(text) {
-  const cleaned = String(text || '').trim().replace(/^\`\`\`(?:json)?\s*/i, '').replace(/\s*\`\`\`$/, '');
-  let parsed = null;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch (_) {
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (match) {
-      try { parsed = JSON.parse(match[0]); } catch (_) {}
-    }
-  }
-
-  const player = String(parsed?.player || '').trim().slice(0, 120);
-  const confidence = Math.max(0, Math.min(1, Number(parsed?.confidence) || 0));
-  const unknown = !player || /^unknown$/i.test(player) || confidence < 0.55;
-
-  return {
-    status: unknown ? 'needs_review' : 'matched',
-    player: unknown ? '' : player,
-    confidence,
-    source: 'clip-vision',
-    model: OPENAI_VISION_MODEL
-  };
-}
-
-async function identifyPlayerFromFrames(frames) {
-  if (!OPENAI_API_KEY) {
-    return { status: 'unavailable', player: '', confidence: 0, source: 'clip-vision', model: OPENAI_VISION_MODEL, error: 'OPENAI_API_KEY is not configured.' };
-  }
-  if (!frames.length) {
-    return { status: 'unavailable', player: '', confidence: 0, source: 'clip-vision', model: OPENAI_VISION_MODEL, error: 'No replay frames were provided.' };
-  }
-
-  const content = [{
-    type: 'input_text',
-    text: [
-      'These images are frames from the same sports-card break replay.',
-      'Identify the athlete/player name on the trading card being deliberately held closest to the camera.',
-      'Prioritize the printed player name visible on the card across multiple frames.',
-      'Do not guess from a face, jersey, team colors, or context if the name is not clear.',
-      'If multiple cards appear, choose the card most clearly presented to the camera.',
-      'Return UNKNOWN when you are not confident.',
-      'Respond with JSON only: {"player":"Full Player Name or UNKNOWN","confidence":0.0}'
-    ].join(' ')
-  }];
-
-  for (const frame of frames) {
-    content.push({
-      type: 'input_image',
-      image_url: `data:${frame.mimeType};base64,${frame.data}`,
-      detail: 'low'
-    });
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
-  try {
-    const response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${OPENAI_API_KEY}`,
-        'content-type': 'application/json'
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: OPENAI_VISION_MODEL,
-        input: [{ role: 'user', content }],
-        max_output_tokens: 120
-      })
-    });
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = String(payload?.error?.message || `OpenAI HTTP ${response.status}`).slice(0, 300);
-      console.error(`Clip player recognition failed: ${message}`);
-      return { status: 'error', player: '', confidence: 0, source: 'clip-vision', model: OPENAI_VISION_MODEL, error: message };
-    }
-
-    return parsePlayerRecognition(openAiResponseText(payload));
-  } catch (err) {
-    const message = err?.name === 'AbortError' ? 'Player recognition timed out.' : String(err?.message || err).slice(0, 300);
-    console.error(`Clip player recognition failed: ${message}`);
-    return { status: 'error', player: '', confidence: 0, source: 'clip-vision', model: OPENAI_VISION_MODEL, error: message };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
 
 function clipPlayerSummary(media) {
   const recognition = media?.playerRecognition;
@@ -1185,7 +1070,7 @@ async function ingestAgentMedia(req, res) {
   const agent = agentByToken(req);
   if (!agent) return sendJson(res, 401, { error: 'Invalid agent credentials.' });
 
-  const body = await readJson(req, 2 * 1024 * 1024);
+  const body = await readJson(req, 256 * 1024);
   const kind = body.kind === 'vod' ? 'vod' : body.kind === 'clip' ? 'clip' : '';
   if (!kind) return sendJson(res, 400, { error: 'kind must be clip or vod.' });
 
@@ -1211,8 +1096,14 @@ async function ingestAgentMedia(req, res) {
     shadePath: body.shadePath ? String(body.shadePath) : '',
     error: body.error ? String(body.error).slice(0, 500) : '',
     trigger: String(body.trigger || '').slice(0, 80),
-    playerRecognition: kind === 'clip'
-      ? await identifyPlayerFromFrames(normalizeVisionFrames(body.visionFrames))
+    playerRecognition: kind === 'clip' && body.playerRecognition && typeof body.playerRecognition === 'object'
+      ? {
+          status: String(body.playerRecognition.status || 'needs_review').slice(0, 40),
+          player: String(body.playerRecognition.player || '').slice(0, 120),
+          confidence: Math.max(0, Math.min(1, Number(body.playerRecognition.confidence) || 0)),
+          source: String(body.playerRecognition.source || 'apple-vision-ocr').slice(0, 80),
+          error: String(body.playerRecognition.error || '').slice(0, 300)
+        }
       : null
   };
 
