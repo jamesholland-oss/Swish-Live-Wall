@@ -1,6 +1,7 @@
 import Foundation
 import Vision
-import ImageIO
+import AVFoundation
+import CoreGraphics
 
 struct OCRLine: Codable {
     let frame: Int
@@ -11,17 +12,18 @@ struct OCRLine: Codable {
     let y: Double
 }
 
-func recognize(path: String, frame: Int) -> [OCRLine] {
-    let url = URL(fileURLWithPath: path)
-    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
-        return []
-    }
+struct OCRResult: Codable {
+    let framesAttempted: Int
+    let framesCaptured: Int
+    let lines: [OCRLine]
+    let errors: [String]
+}
 
+func recognize(image: CGImage, frame: Int) -> [OCRLine] {
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     request.usesLanguageCorrection = true
-    request.minimumTextHeight = 0.012
+    request.minimumTextHeight = 0.010
     request.recognitionLanguages = ["en-US"]
 
     let handler = VNImageRequestHandler(cgImage: image, options: [:])
@@ -46,16 +48,65 @@ func recognize(path: String, frame: Int) -> [OCRLine] {
     }
 }
 
-let paths = Array(CommandLine.arguments.dropFirst())
-var results: [OCRLine] = []
-for (index, path) in paths.enumerated() {
-    results.append(contentsOf: recognize(path: path, frame: index))
+func processVideo(path: String) -> OCRResult {
+    let ratios: [Double] = [0.08, 0.20, 0.32, 0.45, 0.58, 0.70, 0.82, 0.90, 0.96]
+    let url = URL(fileURLWithPath: path)
+    let asset = AVURLAsset(url: url)
+
+    let durationSeconds = CMTimeGetSeconds(asset.duration)
+    guard durationSeconds.isFinite && durationSeconds > 0 else {
+        return OCRResult(
+            framesAttempted: ratios.count,
+            framesCaptured: 0,
+            lines: [],
+            errors: ["Unable to read replay duration with AVFoundation."]
+        )
+    }
+
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    generator.maximumSize = CGSize(width: 1920, height: 1920)
+    generator.requestedTimeToleranceBefore = CMTime(seconds: 0.35, preferredTimescale: 600)
+    generator.requestedTimeToleranceAfter = CMTime(seconds: 0.35, preferredTimescale: 600)
+
+    var lines: [OCRLine] = []
+    var captured = 0
+    var errors: [String] = []
+
+    for (index, ratio) in ratios.enumerated() {
+        let seconds = max(0, min(durationSeconds - 0.05, durationSeconds * ratio))
+        let time = CMTime(seconds: seconds, preferredTimescale: 600)
+
+        do {
+            let image = try generator.copyCGImage(at: time, actualTime: nil)
+            captured += 1
+            lines.append(contentsOf: recognize(image: image, frame: index))
+        } catch {
+            errors.append(String(format: "Frame %d at %.2fs: %@", index + 1, seconds, error.localizedDescription))
+        }
+    }
+
+    return OCRResult(
+        framesAttempted: ratios.count,
+        framesCaptured: captured,
+        lines: lines,
+        errors: errors
+    )
 }
 
+let args = Array(CommandLine.arguments.dropFirst())
+guard let videoPath = args.first, !videoPath.isEmpty else {
+    let result = OCRResult(framesAttempted: 0, framesCaptured: 0, lines: [], errors: ["Replay path is required."])
+    let data = try! JSONEncoder().encode(result)
+    print(String(data: data, encoding: .utf8)!)
+    exit(0)
+}
+
+let result = processVideo(path: videoPath)
 let encoder = JSONEncoder()
-if let data = try? encoder.encode(results),
+if let data = try? encoder.encode(result),
    let text = String(data: data, encoding: .utf8) {
     print(text)
 } else {
-    print("[]")
+    print("{\"framesAttempted\":0,\"framesCaptured\":0,\"lines\":[],\"errors\":[\"Unable to encode OCR result.\"]}")
 }
