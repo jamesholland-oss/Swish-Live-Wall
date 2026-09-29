@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { createGoogleWorkspaceAuth } = require('./google-auth');
 
 const PORT = Number(process.env.PORT || 8787);
+const SERVER_VERSION = '2.0.0-beta.28';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
@@ -421,9 +422,14 @@ function agentByToken(req) {
 
 function shadeWebhookAuthorized(req) {
   if (!SHADE_WEBHOOK_KEY) return false;
+
   const auth = String(req.headers.authorization || '');
-  if (!auth.startsWith('Bearer ')) return false;
-  return safeEqual(auth.slice(7).trim(), SHADE_WEBHOOK_KEY);
+  if (auth.startsWith('Bearer ') && safeEqual(auth.slice(7).trim(), SHADE_WEBHOOK_KEY)) {
+    return true;
+  }
+
+  const explicit = String(req.headers['x-swish-shade-key'] || '').trim();
+  return Boolean(explicit) && safeEqual(explicit, SHADE_WEBHOOK_KEY);
 }
 
 function normalizeShareUrl(value) {
@@ -439,6 +445,41 @@ function normalizeShareUrl(value) {
 
 function normalizeMediaFileName(value) {
   return path.basename(String(value || '').trim());
+}
+
+function findNestedString(value, keys, depth = 0) {
+  if (!value || depth > 4) return '';
+  if (typeof value !== 'object') return '';
+
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+
+  for (const child of Object.values(value)) {
+    if (!child || typeof child !== 'object') continue;
+    const found = findNestedString(child, keys, depth + 1);
+    if (found) return found;
+  }
+
+  return '';
+}
+
+function shadeWebhookFields(body) {
+  const shareUrl = normalizeShareUrl(findNestedString(body, [
+    'shareUrl', 'share_url', 'publishedUrl', 'published_url', 'publicUrl', 'public_url', 'url', 'link'
+  ]));
+
+  const shadePath = findNestedString(body, [
+    'shadePath', 'shade_path', 'assetPath', 'asset_path', 'filePath', 'file_path', 'path'
+  ]).slice(0, 1000);
+
+  const directName = findNestedString(body, [
+    'fileName', 'filename', 'file_name', 'assetName', 'asset_name', 'name'
+  ]);
+
+  const fileName = normalizeMediaFileName(directName || shadePath);
+  return { shareUrl, shadePath, fileName };
 }
 
 function pendingShadeLinkForMedia(media) {
@@ -982,6 +1023,7 @@ async function sendClipSlack(media) {
     }
     media.slackSentAt = nowIso();
     schedulePersist();
+    console.log(`[Clip] Slack sent: ${media.fileName} | link=${media.shadeShareUrl ? 'attached' : 'unavailable'}`);
     return true;
   } catch (err) {
     console.error('Slack clip alert failed:', err.message);
@@ -1223,6 +1265,13 @@ async function ingestAgentMedia(req, res) {
   state.media.unshift(media);
   if (state.media.length > 10000) state.media.length = 10000;
   schedulePersist();
+
+  if (kind === 'clip') {
+    console.log(
+      `[Clip] received: ${media.fileName} | player=${media.playerRecognition?.player || media.playerRecognition?.status || 'missing'} | shadeVerified=${media.shadeVerified} | shareLink=${Boolean(media.shadeShareUrl)}`
+    );
+  }
+
   await sendClipSlack(media);
   return sendJson(res, 201, { ok: true, media });
 }
@@ -1232,21 +1281,18 @@ async function ingestShadeShareLink(req, res) {
   if (!shadeWebhookAuthorized(req)) return sendJson(res, 401, { error: 'Invalid Shade webhook key.' });
 
   const body = await readJson(req, 128 * 1024);
-  const shareUrl = normalizeShareUrl(body.shareUrl || body.url || body.link);
-  const fileName = normalizeMediaFileName(body.fileName || body.filename || body.name || body.shadePath || body.path);
-  const shadePath = String(body.shadePath || body.path || '').trim().slice(0, 1000);
+  const { shareUrl, fileName, shadePath } = shadeWebhookFields(body);
 
   if (!shareUrl || !fileName) {
-    return sendJson(res, 400, { error: 'A valid HTTPS shareUrl and fileName/path are required.' });
+    console.error('[Shade Link] callback rejected: missing valid share URL or file name/path');
+    return sendJson(res, 400, { error: 'A valid HTTPS share URL and file name/path are required.' });
   }
 
-  let media = state.media.find((item) =>
-    item?.kind === 'clip' &&
-    (
-      normalizeMediaFileName(item.fileName) === fileName ||
-      (shadePath && item.shadePath && String(item.shadePath) === shadePath)
-    )
-  );
+  const media = state.media.find((item) => {
+    if (item?.kind !== 'clip' || item.shadeShareUrl) return false;
+    if (shadePath && item.shadePath && String(item.shadePath) === shadePath) return true;
+    return normalizeMediaFileName(item.fileName) === fileName;
+  });
 
   const link = {
     fileName,
@@ -1259,11 +1305,13 @@ async function ingestShadeShareLink(req, res) {
     state.pendingShadeLinks.unshift(link);
     if (state.pendingShadeLinks.length > 500) state.pendingShadeLinks.length = 500;
     schedulePersist();
+    console.log(`[Shade Link] queued before media record: ${fileName}`);
     return sendJson(res, 202, { ok: true, pending: true, fileName });
   }
 
-  if (!media.shadeShareUrl) attachShadeLink(media, link);
+  attachShadeLink(media, link);
   schedulePersist();
+  console.log(`[Shade Link] attached: ${media.fileName}`);
   await sendClipSlack(media);
 
   return sendJson(res, 200, {
@@ -1468,7 +1516,14 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (req.method === 'GET' && url.pathname === '/health') {
-      return sendJson(res, 200, { ok: true, rooms: Object.keys(state.agents).length, time: nowIso() });
+      return sendJson(res, 200, {
+        ok: true,
+        serverVersion: SERVER_VERSION,
+        rooms: Object.keys(state.agents).length,
+        shadeLinkCallbackConfigured: Boolean(SHADE_WEBHOOK_KEY),
+        shadeLinkGraceMs: SHADE_LINK_GRACE_MS,
+        time: nowIso()
+      });
     }
     if (req.method === 'POST' && url.pathname === '/api/auth/google/start') return googleAuth.start(req, res);
     if (req.method === 'GET' && url.pathname === '/api/auth/google/callback') return googleAuth.callback(req, res, url);
