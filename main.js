@@ -454,7 +454,20 @@ function likelyPlayerNameFromOcr(lines) {
 
 async function extractClipPlayer(videoPath) {
   if (process.platform !== 'darwin' || !videoPath || !fs.existsSync(videoPath)) {
-    return { status: 'unavailable', player: '', confidence: 0, source: 'apple-vision-ocr' };
+    return {
+      status: 'unavailable',
+      player: '',
+      confidence: 0,
+      source: 'apple-vision-ocr',
+      diagnostics: {
+        stage: 'preflight',
+        framesAttempted: 0,
+        framesCaptured: 0,
+        ocrLineCount: 0,
+        topText: [],
+        error: process.platform !== 'darwin' ? 'Apple Vision OCR requires macOS.' : 'Replay file was unavailable.'
+      }
+    };
   }
 
   const helperPath = app.isPackaged
@@ -462,7 +475,21 @@ async function extractClipPlayer(videoPath) {
     : path.join(__dirname, 'native', 'vision-ocr');
 
   if (!fs.existsSync(helperPath)) {
-    return { status: 'unavailable', player: '', confidence: 0, source: 'apple-vision-ocr', error: 'Vision OCR helper is unavailable.' };
+    return {
+      status: 'unavailable',
+      player: '',
+      confidence: 0,
+      source: 'apple-vision-ocr',
+      error: 'Vision OCR helper is unavailable.',
+      diagnostics: {
+        stage: 'helper',
+        framesAttempted: 0,
+        framesCaptured: 0,
+        ocrLineCount: 0,
+        topText: [],
+        error: 'Vision OCR helper is unavailable.'
+      }
+    };
   }
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swish-clip-ocr-'));
@@ -484,11 +511,25 @@ async function extractClipPlayer(videoPath) {
     const duration = Number(await frameWindow.webContents.executeJavaScript(
       `window.swishFrameExtractor.load(${JSON.stringify(fileUrl)})`
     ));
+    const ratios = [0.08, 0.2, 0.32, 0.45, 0.58, 0.7, 0.82, 0.9, 0.96];
+
     if (!Number.isFinite(duration) || duration <= 0) {
-      return { status: 'needs_review', player: '', confidence: 0, source: 'apple-vision-ocr' };
+      return {
+        status: 'needs_review',
+        player: '',
+        confidence: 0,
+        source: 'apple-vision-ocr',
+        diagnostics: {
+          stage: 'video-metadata',
+          framesAttempted: ratios.length,
+          framesCaptured: 0,
+          ocrLineCount: 0,
+          topText: [],
+          error: 'Replay duration could not be read.'
+        }
+      };
     }
 
-    const ratios = [0.08, 0.2, 0.32, 0.45, 0.58, 0.7, 0.82, 0.9, 0.96];
     const framePaths = [];
 
     for (let index = 0; index < ratios.length; index += 1) {
@@ -505,18 +546,58 @@ async function extractClipPlayer(videoPath) {
 
     const result = await execFileText(helperPath, framePaths, 25000);
     if (!result.ok) {
+      const error = (result.stderr || result.error?.message || 'Local OCR failed.').slice(0, 300);
       return {
         status: 'error',
         player: '',
         confidence: 0,
         source: 'apple-vision-ocr',
-        error: (result.stderr || result.error?.message || 'Local OCR failed.').slice(0, 300)
+        error,
+        diagnostics: {
+          stage: 'vision-ocr',
+          framesAttempted: ratios.length,
+          framesCaptured: framePaths.length,
+          ocrLineCount: 0,
+          topText: [],
+          error
+        }
       };
     }
 
     let lines = [];
-    try { lines = JSON.parse(result.stdout || '[]'); } catch (_) {}
-    return likelyPlayerNameFromOcr(lines);
+    let parseError = '';
+    try {
+      lines = JSON.parse(result.stdout || '[]');
+      if (!Array.isArray(lines)) lines = [];
+    } catch (err) {
+      parseError = `Unable to parse OCR output: ${err.message}`;
+      lines = [];
+    }
+
+    const topText = [...lines]
+      .map((line) => ({
+        text: normalizeOcrCandidate(line?.text),
+        confidence: Math.max(0, Number(line?.confidence) || 0),
+        area: Math.max(0, Number(line?.area) || 0)
+      }))
+      .filter((line) => line.text)
+      .sort((a, b) => (b.confidence * (1 + b.area * 20)) - (a.confidence * (1 + a.area * 20)))
+      .map((line) => line.text)
+      .filter((text, index, all) => all.findIndex((value) => value.toUpperCase() === text.toUpperCase()) === index)
+      .slice(0, 12);
+
+    const recognition = likelyPlayerNameFromOcr(lines);
+    return {
+      ...recognition,
+      diagnostics: {
+        stage: parseError ? 'ocr-parse' : 'complete',
+        framesAttempted: ratios.length,
+        framesCaptured: framePaths.length,
+        ocrLineCount: lines.length,
+        topText,
+        error: parseError
+      }
+    };
   } finally {
     if (!frameWindow.isDestroyed()) frameWindow.destroy();
     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
