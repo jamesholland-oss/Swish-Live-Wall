@@ -132,6 +132,11 @@ function streamTelemetryState(stream) {
   if (status?.agentOnline === false) return 'unknown';
   if (status?.streamingActive === true) return 'live';
   if (status?.streamingActive === false) return 'off';
+
+  // Swish Poke TikTok intentionally fails open for provider visibility when
+  // OBS is running but its WebSocket cannot provide a verified live state.
+  if (status?.allowUnverifiedProviderDisplay === true) return 'live';
+
   return 'unknown';
 }
 
