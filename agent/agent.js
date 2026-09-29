@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const net = require('net');
 const { execFile } = require('child_process');
 
-const AGENT_VERSION = '2.0.0-beta.21';
+const AGENT_VERSION = '2.0.0-beta.22';
 const MAX_DIAGNOSTIC_BYTES = 25 * 1024 * 1024;
 
 function ensureDir(dir) {
@@ -492,7 +492,7 @@ function startAgent(options = {}) {
   const obsHost = String(options.obsWebSocketHost || '127.0.0.1');
   const obsPort = Number(options.obsWebSocketPort || 4455);
   const obsPassword = String(options.obsWebSocketPassword || '');
-  const extractClipFrames = typeof options.extractClipFrames === 'function' ? options.extractClipFrames : null;
+  const extractClipPlayer = typeof options.extractClipPlayer === 'function' ? options.extractClipPlayer : null;
   let enrollmentKey = String(options.enrollmentKey || process.env.SWISH_AGENT_ENROLLMENT_KEY || '');
   let credentials = readJson(credentialsFile, null);
   let stopped = false;
@@ -561,12 +561,19 @@ function startAgent(options = {}) {
     const shade = await destinationForMedia(sourcePath, kind);
     const auth = await enroll();
 
-    let visionFrames = [];
-    if (kind === 'clip' && extractClipFrames) {
+    let playerRecognition = null;
+    if (kind === 'clip' && extractClipPlayer) {
       try {
-        visionFrames = await extractClipFrames(sourcePath);
+        playerRecognition = await extractClipPlayer(sourcePath);
       } catch (err) {
-        console.error(`[Swish Agent] Clip frame extraction failed: ${err.message}`);
+        console.error(`[Swish Agent] Local player OCR failed: ${err.message}`);
+        playerRecognition = {
+          status: 'error',
+          player: '',
+          confidence: 0,
+          source: 'apple-vision-ocr',
+          error: String(err.message || err).slice(0, 300)
+        };
       }
     }
 
@@ -589,9 +596,7 @@ function startAgent(options = {}) {
           shadePath: shade.destinationPath || '',
           error: shade.error || '',
           trigger: kind === 'clip' ? 'obs-replay-buffer' : 'obs-recording',
-          visionFrames: kind === 'clip' && Array.isArray(visionFrames)
-            ? visionFrames.slice(0, 4)
-            : []
+          playerRecognition: kind === 'clip' ? playerRecognition : null
         })
       });
       if (!response.ok) console.error(`[Swish Agent] Media event upload failed (${response.status})`);
@@ -737,7 +742,7 @@ function startAgent(options = {}) {
             'diagnostics-bundle-v1',
             'obs-output-events-v1',
             'media-routing-v1',
-            'clip-vision-frames-v1'
+            'local-apple-vision-ocr-v1'
           ]
         })
       });
