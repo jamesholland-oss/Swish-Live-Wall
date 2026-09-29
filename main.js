@@ -1,9 +1,7 @@
 const { app, BrowserWindow, ipcMain, session, net, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const { execFile } = require('child_process');
-const { pathToFileURL } = require('url');
 const { startAgent } = require('./agent/agent');
 
 // Keep existing Swish Live Wall settings/cookies when an installed V1 app is upgraded
@@ -492,116 +490,67 @@ async function extractClipPlayer(videoPath) {
     };
   }
 
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swish-clip-ocr-'));
-  const frameWindow = new BrowserWindow({
-    show: false,
-    width: 1280,
-    height: 720,
-    webPreferences: {
-      offscreen: true,
-      contextIsolation: true,
-      sandbox: true,
-      backgroundThrottling: false
-    }
-  });
-
-  try {
-    await frameWindow.loadFile('frame-extractor.html');
-    const fileUrl = pathToFileURL(videoPath).href;
-    const duration = Number(await frameWindow.webContents.executeJavaScript(
-      `window.swishFrameExtractor.load(${JSON.stringify(fileUrl)})`
-    ));
-    const ratios = [0.08, 0.2, 0.32, 0.45, 0.58, 0.7, 0.82, 0.9, 0.96];
-
-    if (!Number.isFinite(duration) || duration <= 0) {
-      return {
-        status: 'needs_review',
-        player: '',
-        confidence: 0,
-        source: 'apple-vision-ocr',
-        diagnostics: {
-          stage: 'video-metadata',
-          framesAttempted: ratios.length,
-          framesCaptured: 0,
-          ocrLineCount: 0,
-          topText: [],
-          error: 'Replay duration could not be read.'
-        }
-      };
-    }
-
-    const framePaths = [];
-
-    for (let index = 0; index < ratios.length; index += 1) {
-      const seconds = Math.max(0, Math.min(duration - 0.1, duration * ratios[index]));
-      await frameWindow.webContents.executeJavaScript(
-        `window.swishFrameExtractor.seek(${JSON.stringify(seconds)})`
-      );
-      const image = await frameWindow.webContents.capturePage();
-      const resized = image.getSize().width > 1600 ? image.resize({ width: 1600 }) : image;
-      const framePath = path.join(tempDir, `frame-${index + 1}.jpg`);
-      fs.writeFileSync(framePath, resized.toJPEG(82));
-      framePaths.push(framePath);
-    }
-
-    const result = await execFileText(helperPath, framePaths, 25000);
-    if (!result.ok) {
-      const error = (result.stderr || result.error?.message || 'Local OCR failed.').slice(0, 300);
-      return {
-        status: 'error',
-        player: '',
-        confidence: 0,
-        source: 'apple-vision-ocr',
-        error,
-        diagnostics: {
-          stage: 'vision-ocr',
-          framesAttempted: ratios.length,
-          framesCaptured: framePaths.length,
-          ocrLineCount: 0,
-          topText: [],
-          error
-        }
-      };
-    }
-
-    let lines = [];
-    let parseError = '';
-    try {
-      lines = JSON.parse(result.stdout || '[]');
-      if (!Array.isArray(lines)) lines = [];
-    } catch (err) {
-      parseError = `Unable to parse OCR output: ${err.message}`;
-      lines = [];
-    }
-
-    const topText = [...lines]
-      .map((line) => ({
-        text: normalizeOcrCandidate(line?.text),
-        confidence: Math.max(0, Number(line?.confidence) || 0),
-        area: Math.max(0, Number(line?.area) || 0)
-      }))
-      .filter((line) => line.text)
-      .sort((a, b) => (b.confidence * (1 + b.area * 20)) - (a.confidence * (1 + a.area * 20)))
-      .map((line) => line.text)
-      .filter((text, index, all) => all.findIndex((value) => value.toUpperCase() === text.toUpperCase()) === index)
-      .slice(0, 12);
-
-    const recognition = likelyPlayerNameFromOcr(lines);
+  const result = await execFileText(helperPath, [videoPath], 45000);
+  if (!result.ok) {
+    const error = (result.stderr || result.error?.message || 'Native AVFoundation OCR failed.').slice(0, 300);
     return {
-      ...recognition,
+      status: 'error',
+      player: '',
+      confidence: 0,
+      source: 'apple-vision-ocr',
+      error,
       diagnostics: {
-        stage: parseError ? 'ocr-parse' : 'complete',
-        framesAttempted: ratios.length,
-        framesCaptured: framePaths.length,
-        ocrLineCount: lines.length,
-        topText,
-        error: parseError
+        stage: 'native-avfoundation',
+        framesAttempted: 9,
+        framesCaptured: 0,
+        ocrLineCount: 0,
+        topText: [],
+        error
       }
     };
-  } finally {
-    if (!frameWindow.isDestroyed()) frameWindow.destroy();
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
   }
+
+  let payload = null;
+  let parseError = '';
+  try {
+    payload = JSON.parse(result.stdout || '{}');
+  } catch (err) {
+    parseError = `Unable to parse native OCR output: ${err.message}`;
+  }
+
+  const lines = Array.isArray(payload?.lines) ? payload.lines : [];
+  const framesAttempted = Math.max(0, Number(payload?.framesAttempted) || 0);
+  const framesCaptured = Math.max(0, Number(payload?.framesCaptured) || 0);
+  const helperErrors = Array.isArray(payload?.errors)
+    ? payload.errors.map((value) => String(value)).filter(Boolean)
+    : [];
+
+  const topText = [...lines]
+    .map((line) => ({
+      text: normalizeOcrCandidate(line?.text),
+      confidence: Math.max(0, Number(line?.confidence) || 0),
+      area: Math.max(0, Number(line?.area) || 0)
+    }))
+    .filter((line) => line.text)
+    .sort((a, b) => (b.confidence * (1 + b.area * 20)) - (a.confidence * (1 + a.area * 20)))
+    .map((line) => line.text)
+    .filter((text, index, all) => all.findIndex((value) => value.toUpperCase() === text.toUpperCase()) === index)
+    .slice(0, 12);
+
+  const recognition = likelyPlayerNameFromOcr(lines);
+  const diagnosticError = [parseError, ...helperErrors].filter(Boolean).join(' | ').slice(0, 300);
+
+  return {
+    ...recognition,
+    diagnostics: {
+      stage: parseError ? 'native-parse' : (framesCaptured > 0 ? 'complete-native' : 'native-avfoundation'),
+      framesAttempted,
+      framesCaptured,
+      ocrLineCount: lines.length,
+      topText,
+      error: diagnosticError
+    }
+  };
 }
 
 async function startAgentMode(config) {
