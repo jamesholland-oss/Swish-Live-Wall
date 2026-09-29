@@ -1,0 +1,82 @@
+name: Release beta.19
+
+on:
+  push:
+    branches:
+      - v2-control-plane
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Release beta.19'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            command: npm run dist:mac
+            artifact: swish-control-macos-beta19
+          - os: windows-latest
+            command: npm run dist:win
+            artifact: swish-control-windows-beta19
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout beta.19
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate
+        run: npm run check
+
+      - name: Build
+        run: ${{ matrix.command }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/**
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Release beta.19'
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download builds
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish v2.0.0-beta.19
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.0.0-beta.19
+          name: Swish Control v2.0.0-beta.19
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          body: |
+            Swish Control beta.19.
+
+            Includes Google Workspace sign-in and role-based access, Content access controls,
+            Users & Access management, Reports and business data foundations, room dashboard
+            improvements, Replay Buffer clip ingestion and Slack clip alerts, Shade clip/VOD
+            routing, and the latest live-wall compatibility fixes.
+          files: |
+            release-assets/**/*.dmg
+            release-assets/**/*.zip
+            release-assets/**/*.exe
