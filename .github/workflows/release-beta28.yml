@@ -1,0 +1,91 @@
+name: Release beta.28
+
+on:
+  push:
+    branches:
+      - v2-control-plane
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Release beta.28'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            command: npm run dist:mac
+            artifact: swish-control-macos-beta28
+          - os: windows-latest
+            command: npm run dist:win
+            artifact: swish-control-windows-beta28
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout beta.28
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile native AVFoundation + Vision helper
+        if: runner.os == 'macOS'
+        run: swiftc native/VisionOCR.swift -O -framework Vision -framework AVFoundation -framework CoreGraphics -o native/vision-ocr
+
+      - name: Validate
+        run: npm run check
+
+      - name: Build
+        run: ${{ matrix.command }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/**
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Release beta.28'
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download builds
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish v2.0.0-beta.28
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.0.0-beta.28
+          name: Swish Control v2.0.0-beta.28
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          body: |
+            Swish Control beta.28.
+
+            Tightens player recognition and completes the Shade link callback path.
+            Native Apple Vision OCR now only inspects the lower 60% of replay frames,
+            matching the card presentation area and excluding host/marketing banners.
+            Player candidate filtering also rejects common stream/UI phrases.
+
+            The Shade share-link callback now accepts common nested automation payloads,
+            supports Bearer or x-swish-shade-key authentication, logs link matching,
+            and exposes server/link configuration on /health. Existing OBS save paths,
+            room CONTENT/CLIPS routing, Shade copying, and 30-second Slack fallback remain unchanged.
+          files: |
+            release-assets/**/*.dmg
+            release-assets/**/*.zip
+            release-assets/**/*.exe
