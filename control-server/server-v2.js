@@ -19,6 +19,7 @@ const SESSION_HOURS = Math.max(1, Number(process.env.CONTROL_SESSION_HOURS || 12
 const OFFLINE_AFTER_MS = Math.max(15000, Number(process.env.OFFLINE_AFTER_MS || 30000));
 const SAMPLE_INTERVAL_MS = Math.max(60000, Number(process.env.SAMPLE_INTERVAL_MS || 300000));
 const MAX_SAMPLES = Math.max(288, Number(process.env.MAX_SAMPLES_PER_AGENT || 2016));
+const SHADE_LINK_GRACE_MS = Math.max(5000, Number(process.env.SHADE_LINK_GRACE_MS || 30000));
 
 const sessions = new Map();
 let persistTimer = null;
@@ -944,13 +945,18 @@ async function sendClipMetadataSlack(media) {
   }
 }
 
-function clipReadyForSlack(media) {
+function clipReadyForSlack(media, now = Date.now()) {
   if (!media || media.kind !== 'clip') return false;
   if (media.slackSentAt) return false;
-  if (!media.shadeVerified || !media.shadeShareUrl) return false;
+  if (!media.shadeVerified) return false;
+
   const recognition = media.playerRecognition;
   if (!recognition || !recognition.status) return false;
-  return true;
+
+  if (media.shadeShareUrl) return true;
+
+  const deadline = Date.parse(media.shadeLinkDeadlineAt || '');
+  return Number.isFinite(deadline) && now >= deadline;
 }
 
 async function sendClipSlack(media) {
@@ -961,7 +967,7 @@ async function sendClipSlack(media) {
     `DATE/Time: ${clipTimeLabel(media.createdAt)}`,
     clipPlayerSummary(media),
     'Shade: Saved ✓',
-    `Link: ${media.shadeShareUrl}`
+    `Link: ${media.shadeShareUrl || 'Unavailable'}`
   ];
 
   try {
@@ -1178,6 +1184,7 @@ async function ingestAgentMedia(req, res) {
     trigger: String(body.trigger || '').slice(0, 80),
     shadeShareUrl: '',
     shadeShareLinkedAt: null,
+    shadeLinkDeadlineAt: kind === 'clip' ? new Date(Date.now() + SHADE_LINK_GRACE_MS).toISOString() : null,
     slackSentAt: null,
     playerRecognition: kind === 'clip' && body.playerRecognition && typeof body.playerRecognition === 'object'
       ? {
@@ -1216,7 +1223,7 @@ async function ingestAgentMedia(req, res) {
   state.media.unshift(media);
   if (state.media.length > 10000) state.media.length = 10000;
   schedulePersist();
-  if (media.shadeShareUrl) await sendClipSlack(media);
+  await sendClipSlack(media);
   return sendJson(res, 201, { ok: true, media });
 }
 
@@ -1568,6 +1575,13 @@ setInterval(() => {
 
   const now = Date.now();
   for (const [token, session] of sessions) if (session.expiresAt <= now) sessions.delete(token);
+
+  for (const media of state.media) {
+    if (!clipReadyForSlack(media, now)) continue;
+    sendClipSlack(media).catch((err) => {
+      console.error('Deferred Slack clip alert failed:', err.message);
+    });
+  }
 }, 5000).unref();
 
 server.listen(PORT, '0.0.0.0', () => {
