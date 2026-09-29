@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const net = require('net');
 const { execFile } = require('child_process');
 
-const AGENT_VERSION = '2.0.0-beta.19';
+const AGENT_VERSION = '2.0.0-beta.21';
 const MAX_DIAGNOSTIC_BYTES = 25 * 1024 * 1024;
 
 function ensureDir(dir) {
@@ -492,6 +492,7 @@ function startAgent(options = {}) {
   const obsHost = String(options.obsWebSocketHost || '127.0.0.1');
   const obsPort = Number(options.obsWebSocketPort || 4455);
   const obsPassword = String(options.obsWebSocketPassword || '');
+  const extractClipFrames = typeof options.extractClipFrames === 'function' ? options.extractClipFrames : null;
   let enrollmentKey = String(options.enrollmentKey || process.env.SWISH_AGENT_ENROLLMENT_KEY || '');
   let credentials = readJson(credentialsFile, null);
   let stopped = false;
@@ -560,6 +561,15 @@ function startAgent(options = {}) {
     const shade = await destinationForMedia(sourcePath, kind);
     const auth = await enroll();
 
+    let visionFrames = [];
+    if (kind === 'clip' && extractClipFrames) {
+      try {
+        visionFrames = await extractClipFrames(sourcePath);
+      } catch (err) {
+        console.error(`[Swish Agent] Clip frame extraction failed: ${err.message}`);
+      }
+    }
+
     try {
       const response = await fetch(`${serverUrl}/api/agent/media`, {
         method: 'POST',
@@ -578,7 +588,10 @@ function startAgent(options = {}) {
           shadeVerified: shade.verified,
           shadePath: shade.destinationPath || '',
           error: shade.error || '',
-          trigger: kind === 'clip' ? 'obs-replay-buffer' : 'obs-recording'
+          trigger: kind === 'clip' ? 'obs-replay-buffer' : 'obs-recording',
+          visionFrames: kind === 'clip' && Array.isArray(visionFrames)
+            ? visionFrames.slice(0, 4)
+            : []
         })
       });
       if (!response.ok) console.error(`[Swish Agent] Media event upload failed (${response.status})`);
@@ -723,7 +736,8 @@ function startAgent(options = {}) {
             'mac-memory-pressure',
             'diagnostics-bundle-v1',
             'obs-output-events-v1',
-            'media-routing-v1'
+            'media-routing-v1',
+            'clip-vision-frames-v1'
           ]
         })
       });
