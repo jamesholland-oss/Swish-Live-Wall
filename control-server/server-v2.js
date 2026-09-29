@@ -12,6 +12,7 @@ const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
 const SLACK_WEBHOOK_URL = String(process.env.SLACK_WEBHOOK_URL || '');
 const SLACK_CLIP_WEBHOOK_URL = String(process.env.SLACK_CLIP_WEBHOOK_URL || '');
 const BUSINESS_INGEST_KEY = String(process.env.BUSINESS_INGEST_KEY || '');
+const SHADE_WEBHOOK_KEY = String(process.env.SHADE_WEBHOOK_KEY || '');
 const GOOGLE_WORKSPACE_DOMAIN = String(process.env.GOOGLE_WORKSPACE_DOMAIN || '').trim().toLowerCase();
 const GOOGLE_DEFAULT_ROLE_RAW = String(process.env.GOOGLE_DEFAULT_ROLE || 'viewer').trim().toLowerCase();
 const SESSION_HOURS = Math.max(1, Number(process.env.CONTROL_SESSION_HOURS || 12));
@@ -33,13 +34,14 @@ function safeEqual(a, b) {
 
 function blankState() {
   return {
-    version: 5,
+    version: 6,
     agents: {},
     incidents: [],
     samples: {},
     removedDevices: [],
     media: [],
     hitEvents: [],
+    pendingShadeLinks: [],
     business: {},
     roomSettings: {},
     userAccess: {}
@@ -59,6 +61,7 @@ function loadState() {
       removedDevices: Array.isArray(saved.removedDevices) ? saved.removedDevices : [],
       media: Array.isArray(saved.media) ? saved.media : [],
       hitEvents: Array.isArray(saved.hitEvents) ? saved.hitEvents : [],
+      pendingShadeLinks: Array.isArray(saved.pendingShadeLinks) ? saved.pendingShadeLinks : [],
       business: saved.business && typeof saved.business === 'object' ? saved.business : {},
       roomSettings: saved.roomSettings && typeof saved.roomSettings === 'object' ? saved.roomSettings : {},
       userAccess: saved.userAccess && typeof saved.userAccess === 'object' ? saved.userAccess : {}
@@ -413,6 +416,50 @@ function agentByToken(req) {
   if (!auth.startsWith('Bearer ')) return null;
   const hash = sha256(auth.slice(7).trim());
   return Object.values(state.agents).find((agent) => agent.tokenHash === hash) || null;
+}
+
+function shadeWebhookAuthorized(req) {
+  if (!SHADE_WEBHOOK_KEY) return false;
+  const auth = String(req.headers.authorization || '');
+  if (!auth.startsWith('Bearer ')) return false;
+  return safeEqual(auth.slice(7).trim(), SHADE_WEBHOOK_KEY);
+}
+
+function normalizeShareUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' ? url.href : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function normalizeMediaFileName(value) {
+  return path.basename(String(value || '').trim());
+}
+
+function pendingShadeLinkForMedia(media) {
+  if (!media?.fileName) return null;
+  const fileName = normalizeMediaFileName(media.fileName);
+  const index = state.pendingShadeLinks.findIndex((item) => {
+    if (!item) return false;
+    if (item.fileName && normalizeMediaFileName(item.fileName) === fileName) return true;
+    if (item.shadePath && normalizeMediaFileName(item.shadePath) === fileName) return true;
+    return false;
+  });
+  if (index < 0) return null;
+  const [link] = state.pendingShadeLinks.splice(index, 1);
+  return link || null;
+}
+
+function attachShadeLink(media, link) {
+  if (!media || !link?.shareUrl) return false;
+  media.shadeShareUrl = link.shareUrl;
+  media.shadeShareLinkedAt = nowIso();
+  media.shadeVerified = true;
+  return true;
 }
 
 function slugify(value) {
@@ -898,24 +945,16 @@ async function sendClipMetadataSlack(media) {
 }
 
 async function sendClipSlack(media) {
-  if (!SLACK_CLIP_WEBHOOK_URL || media.kind !== 'clip') return;
-  const shadeLine = media.shadeVerified
-    ? 'Shade: Saved ✓'
-    : media.shadeAttempted
-      ? 'Shade: Not confirmed ⚠'
-      : 'Shade: Not attempted';
+  if (!SLACK_CLIP_WEBHOOK_URL || media.kind !== 'clip') return false;
+  if (!media.shadeShareUrl || media.slackSentAt) return false;
 
   const lines = [
     `🎬 Clip Created — ${media.roomName}`,
-    `Time: ${clipTimeLabel(media.createdAt)}`,
-    media.streamName ? `Channel: ${media.streamName}${media.platform ? ` (${media.platform})` : ''}` : '',
-    media.currentBreak ? `Break: ${media.currentBreak}` : '',
+    `DATE/Time: ${clipTimeLabel(media.createdAt)}`,
     clipPlayerSummary(media),
-    ...clipOcrDiagnostics(media),
-    `File: ${media.fileName}`,
-    `Local save: ${media.localSaved ? '✓' : '⚠'}`,
-    shadeLine
-  ].filter(Boolean);
+    'Shade: Saved ✓',
+    `Link: ${media.shadeShareUrl}`
+  ];
 
   try {
     const response = await fetch(SLACK_CLIP_WEBHOOK_URL, {
@@ -923,9 +962,16 @@ async function sendClipSlack(media) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: lines.join('\n') })
     });
-    if (!response.ok) console.error(`Slack clip alert failed: HTTP ${response.status}`);
+    if (!response.ok) {
+      console.error(`Slack clip alert failed: HTTP ${response.status}`);
+      return false;
+    }
+    media.slackSentAt = nowIso();
+    schedulePersist();
+    return true;
   } catch (err) {
     console.error('Slack clip alert failed:', err.message);
+    return false;
   }
 }
 
@@ -1122,6 +1168,9 @@ async function ingestAgentMedia(req, res) {
     shadePath: body.shadePath ? String(body.shadePath) : '',
     error: body.error ? String(body.error).slice(0, 500) : '',
     trigger: String(body.trigger || '').slice(0, 80),
+    shadeShareUrl: '',
+    shadeShareLinkedAt: null,
+    slackSentAt: null,
     playerRecognition: kind === 'clip' && body.playerRecognition && typeof body.playerRecognition === 'object'
       ? {
           status: String(body.playerRecognition.status || 'needs_review').slice(0, 40),
@@ -1151,11 +1200,64 @@ async function ingestAgentMedia(req, res) {
     if (hit) attachHitToMedia(media, hit);
   }
 
+  if (kind === 'clip') {
+    const pendingShadeLink = pendingShadeLinkForMedia(media);
+    if (pendingShadeLink) attachShadeLink(media, pendingShadeLink);
+  }
+
   state.media.unshift(media);
   if (state.media.length > 10000) state.media.length = 10000;
   schedulePersist();
-  sendClipSlack(media);
+  if (media.shadeShareUrl) await sendClipSlack(media);
   return sendJson(res, 201, { ok: true, media });
+}
+
+async function ingestShadeShareLink(req, res) {
+  if (!SHADE_WEBHOOK_KEY) return sendJson(res, 503, { error: 'Shade webhook is not configured.' });
+  if (!shadeWebhookAuthorized(req)) return sendJson(res, 401, { error: 'Invalid Shade webhook key.' });
+
+  const body = await readJson(req, 128 * 1024);
+  const shareUrl = normalizeShareUrl(body.shareUrl || body.url || body.link);
+  const fileName = normalizeMediaFileName(body.fileName || body.filename || body.name || body.shadePath || body.path);
+  const shadePath = String(body.shadePath || body.path || '').trim().slice(0, 1000);
+
+  if (!shareUrl || !fileName) {
+    return sendJson(res, 400, { error: 'A valid HTTPS shareUrl and fileName/path are required.' });
+  }
+
+  let media = state.media.find((item) =>
+    item?.kind === 'clip' &&
+    (
+      normalizeMediaFileName(item.fileName) === fileName ||
+      (shadePath && item.shadePath && String(item.shadePath) === shadePath)
+    )
+  );
+
+  const link = {
+    fileName,
+    shadePath,
+    shareUrl,
+    receivedAt: nowIso()
+  };
+
+  if (!media) {
+    state.pendingShadeLinks.unshift(link);
+    if (state.pendingShadeLinks.length > 500) state.pendingShadeLinks.length = 500;
+    schedulePersist();
+    return sendJson(res, 202, { ok: true, pending: true, fileName });
+  }
+
+  if (!media.shadeShareUrl) attachShadeLink(media, link);
+  schedulePersist();
+  await sendClipSlack(media);
+
+  return sendJson(res, 200, {
+    ok: true,
+    pending: false,
+    mediaId: media.id,
+    fileName: media.fileName,
+    shareUrl: media.shadeShareUrl
+  });
 }
 
 async function ingestHitMetadata(req, res) {
@@ -1360,6 +1462,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/agent/enroll') return enroll(req, res);
     if (req.method === 'POST' && url.pathname === '/api/agent/heartbeat') return heartbeat(req, res);
     if (req.method === 'POST' && url.pathname === '/api/agent/media') return ingestAgentMedia(req, res);
+    if (req.method === 'POST' && url.pathname === '/api/shade/share-link') return ingestShadeShareLink(req, res);
     if (req.method === 'GET' && url.pathname === '/api/wall-status') return sendJson(res, 200, { rooms: wallRooms() });
 
     if (req.method === 'POST' && url.pathname.startsWith('/api/rooms/') && url.pathname.endsWith('/settings')) {
