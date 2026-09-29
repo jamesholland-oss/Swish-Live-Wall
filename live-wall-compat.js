@@ -129,12 +129,22 @@ function setStreamMuted(streamId, muted) {
 function streamTelemetryState(stream) {
   if (!stream?.roomId) return 'unknown';
   const status = statusForRoom(stream.roomId);
+
   if (status?.agentOnline === false) return 'unknown';
   if (status?.streamingActive === true) return 'live';
   if (status?.streamingActive === false) return 'off';
 
   // Swish Poke TikTok intentionally fails open for provider visibility when
-  // OBS is running but its WebSocket cannot provide a verified live state.
+  // the room agent is online but OBS WebSocket live-state verification is not
+  // available. The explicit "off" state above still wins when OBS is closed.
+  const streamName = String(stream?.name || '').trim().toLowerCase();
+  const isSwishPokeTikTok =
+    platformFor(stream) === 'TikTok' &&
+    streamName.includes('swish') &&
+    streamName.includes('poke');
+
+  if (isSwishPokeTikTok && status?.agentOnline !== false) return 'live';
+
   if (status?.allowUnverifiedProviderDisplay === true) return 'live';
 
   return 'unknown';
