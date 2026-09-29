@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, session, net, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const { startAgent } = require('./agent/agent');
 
 // Keep existing Swish Live Wall settings/cookies when an installed V1 app is upgraded
@@ -299,6 +300,53 @@ function configureLoginItem(role) {
   }
 }
 
+async function extractClipFrames(videoPath) {
+  if (!videoPath || !fs.existsSync(videoPath)) return [];
+
+  const frameWindow = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 720,
+    webPreferences: {
+      offscreen: true,
+      contextIsolation: true,
+      sandbox: true,
+      backgroundThrottling: false
+    }
+  });
+
+  try {
+    await frameWindow.loadFile('frame-extractor.html');
+    const fileUrl = pathToFileURL(videoPath).href;
+    const duration = Number(await frameWindow.webContents.executeJavaScript(
+      `window.swishFrameExtractor.load(${JSON.stringify(fileUrl)})`
+    ));
+    if (!Number.isFinite(duration) || duration <= 0) return [];
+
+    const ratios = [0.55, 0.72, 0.86, 0.95];
+    const frames = [];
+
+    for (const ratio of ratios) {
+      const seconds = Math.max(0, Math.min(duration - 0.1, duration * ratio));
+      await frameWindow.webContents.executeJavaScript(
+        `window.swishFrameExtractor.seek(${JSON.stringify(seconds)})`
+      );
+      const image = await frameWindow.webContents.capturePage();
+      const resized = image.getSize().width > 768 ? image.resize({ width: 768 }) : image;
+      const jpeg = resized.toJPEG(62);
+      if (jpeg?.length) frames.push({
+        mimeType: 'image/jpeg',
+        data: jpeg.toString('base64'),
+        atSeconds: Number(seconds.toFixed(2))
+      });
+    }
+
+    return frames;
+  } finally {
+    if (!frameWindow.isDestroyed()) frameWindow.destroy();
+  }
+}
+
 async function startAgentMode(config) {
   if (stopAgent) return;
   if (process.platform === 'darwin' && app.dock) app.dock.hide();
@@ -311,6 +359,7 @@ async function startAgentMode(config) {
     obsWebSocketPassword: config.obsWebSocketPassword,
     stateDir: path.join(app.getPath('userData'), 'agent'),
     heartbeatMs: 10000,
+    extractClipFrames,
     onEnrolled: () => {
       const latest = loadAppConfig();
       if (latest.agentEnrollmentKey) saveAppConfig({ agentEnrollmentKey: '' });
