@@ -26,6 +26,11 @@ func recognize(image: CGImage, frame: Int) -> [OCRLine] {
     request.minimumTextHeight = 0.010
     request.recognitionLanguages = ["en-US"]
 
+    // Only inspect the lower portion of the vertical show frame where cards are
+    // intentionally presented. Vision uses normalized coordinates with a
+    // bottom-left origin, so this excludes host/marketing banners above.
+    request.regionOfInterest = CGRect(x: 0.0, y: 0.0, width: 1.0, height: 0.60)
+
     let handler = VNImageRequestHandler(cgImage: image, options: [:])
     do {
         try handler.perform([request])
