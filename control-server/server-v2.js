@@ -895,6 +895,28 @@ async function sendClipSlack(media) {
   }
 }
 
+function allowUnverifiedProviderDisplay(agent, metrics, agentOnline) {
+  if (!agentOnline || metrics?.obsRunning !== true) return false;
+
+  const name = String(displayRoomName(agent) || '').trim().toLowerCase();
+  const isSwishPokeTikTok =
+    name === 'swish poke tt' ||
+    name === 'swish poke tiktok' ||
+    (name.includes('swish poke') && (name.includes('tt') || name.includes('tiktok')));
+
+  if (!isSwishPokeTikTok) return false;
+
+  // Swish Poke is allowed to fail open for provider visibility when OBS is
+  // running but the OBS WebSocket cannot give us a verified stream state.
+  // This does not change the room's health warning; it only prevents the Wall
+  // from hiding the TikTok provider page behind CHECKING LIVE STATUS.
+  return !(
+    metrics?.obsWebSocketReachable === true &&
+    metrics?.obsWebSocketAuthenticated === true &&
+    typeof metrics?.streamingActive === 'boolean'
+  );
+}
+
 function wallRooms() {
   return Object.values(state.agents).map((agent) => {
     const current = healthFor(agent);
@@ -925,7 +947,8 @@ function wallRooms() {
       issue: current.issue,
       changedAt: agent.healthChangedAt || agent.lastSeenIso || null,
       agentOnline,
-      streamingActive
+      streamingActive,
+      allowUnverifiedProviderDisplay: allowUnverifiedProviderDisplay(agent, metrics, agentOnline)
     };
   }).sort((a, b) => a.roomName.localeCompare(b.roomName));
 }
