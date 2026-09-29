@@ -324,20 +324,67 @@ function likelyPlayerNameFromOcr(lines) {
     'BOWMAN', 'DONRUSS', 'FINEST', 'MOSAIC', 'NATIONAL TREASURES', 'IMMACULATE',
     'FLAWLESS', 'SPECTRA', 'REVOLUTION', 'ORIGINS', 'CERTIFIED', 'ABSOLUTE',
     'CONTENDERS', 'HOOPS', 'SCORE', 'UPPER DECK', 'FLEER', 'SKYBOX', 'LEAF',
-    'AUTOGRAPH', 'SIGNATURE', 'REFRACTOR', 'INSERT', 'PARALLEL', 'CARD'
+    'AUTOGRAPH', 'SIGNATURE', 'REFRACTOR', 'INSERT', 'PARALLEL', 'CARD', 'SWISH',
+    'SWISH BREAKS', 'PACK', 'BUY A', 'GET A'
   ]);
 
+  const raw = (Array.isArray(lines) ? lines : []).map((line) => ({
+    frame: Number(line?.frame) || 0,
+    text: normalizeOcrCandidate(line?.text),
+    confidence: Math.max(0, Number(line?.confidence) || 0),
+    area: Math.max(0, Number(line?.area) || 0),
+    x: Number(line?.x),
+    y: Number(line?.y)
+  })).filter((line) => line.text);
+
+  // Apple Vision often returns first and last names as separate stacked lines
+  // (for example STEVE / NASH). Merge nearby 1-word lines in the same frame.
+  const merged = [...raw];
+  const byFrame = new Map();
+  for (const line of raw) {
+    if (!byFrame.has(line.frame)) byFrame.set(line.frame, []);
+    byFrame.get(line.frame).push(line);
+  }
+
+  for (const frameLines of byFrame.values()) {
+    for (let i = 0; i < frameLines.length; i += 1) {
+      const a = frameLines[i];
+      if (a.text.split(' ').length !== 1 || a.text.length < 2) continue;
+      for (let j = i + 1; j < frameLines.length; j += 1) {
+        const b = frameLines[j];
+        if (b.text.split(' ').length !== 1 || b.text.length < 2) continue;
+        if (![a.x, a.y, b.x, b.y].every(Number.isFinite)) continue;
+
+        const horizontalGap = Math.abs(a.x - b.x);
+        const verticalGap = Math.abs(a.y - b.y);
+        if (horizontalGap > 0.12 || verticalGap > 0.12) continue;
+
+        const top = a.y >= b.y ? a : b;
+        const bottom = top === a ? b : a;
+        merged.push({
+          frame: a.frame,
+          text: `${top.text} ${bottom.text}`,
+          confidence: (a.confidence + b.confidence) / 2,
+          area: a.area + b.area,
+          x: (a.x + b.x) / 2,
+          y: (a.y + b.y) / 2
+        });
+      }
+    }
+  }
+
   const grouped = new Map();
-  for (const line of Array.isArray(lines) ? lines : []) {
-    const text = normalizeOcrCandidate(line?.text);
+  for (const line of merged) {
+    const text = line.text;
     if (!text || text.length < 4 || text.length > 40) continue;
     const upper = text.toUpperCase();
     if (blocked.has(upper)) continue;
-    if (/\b(?:TOPPS|PANINI|PRIZM|CHROME|ROOKIE|AUTOGRAPH|REFRACTOR|BOWMAN|DONRUSS|SELECT|OPTIC)\b/i.test(text)) continue;
+    if (/\b(?:TOPPS|PANINI|PRIZM|CHROME|ROOKIE|AUTOGRAPH|REFRACTOR|BOWMAN|DONRUSS|SELECT|OPTIC|SWISH|PACK)\b/i.test(text)) continue;
 
     const words = text.split(' ').filter(Boolean);
     if (words.length < 2 || words.length > 4) continue;
     if (words.some((word) => word.length < 2)) continue;
+    if (!words.every((word) => /^[A-Za-z.'’\-]+$/.test(word))) continue;
 
     const key = upper.replace(/[.'’\-]/g, '').replace(/\s+/g, ' ').trim();
     if (!key) continue;
@@ -347,37 +394,52 @@ function likelyPlayerNameFromOcr(lines) {
       frames: new Set(),
       confidence: 0,
       area: 0,
-      centerBonus: 0
+      centerBonus: 0,
+      lowerHalfBonus: 0,
+      samples: 0
     };
 
-    previous.frames.add(Number(line?.frame) || 0);
-    previous.confidence += Math.max(0, Number(line?.confidence) || 0);
-    previous.area += Math.max(0, Number(line?.area) || 0);
-    const x = Number(line?.x);
-    if (Number.isFinite(x)) previous.centerBonus += Math.max(0, 1 - Math.abs(0.5 - x) * 2);
+    previous.frames.add(line.frame);
+    previous.confidence += line.confidence;
+    previous.area += line.area;
+    previous.samples += 1;
+
+    if (Number.isFinite(line.x)) {
+      // The held-up card is usually centered; signage/background text is often wider/off-center.
+      previous.centerBonus += Math.max(0, 1 - Math.abs(0.5 - line.x) * 3);
+    }
+    if (Number.isFinite(line.y)) {
+      // Player names on cards are commonly in the center/lower region of the card.
+      previous.lowerHalfBonus += line.y < 0.62 ? 0.35 : 0;
+    }
+
     grouped.set(key, previous);
   }
 
   const ranked = [...grouped.values()].map((candidate) => {
     const repeats = candidate.frames.size;
+    const avgConfidence = candidate.confidence / Math.max(1, candidate.samples);
     const score =
-      repeats * 4 +
-      candidate.confidence * 1.5 +
-      Math.min(candidate.area * 30, 2) +
-      candidate.centerBonus * 0.4;
-    return { ...candidate, repeats, score };
+      repeats * 4.5 +
+      avgConfidence * 2.2 +
+      Math.min(candidate.area * 60, 3.5) +
+      candidate.centerBonus * 0.9 +
+      candidate.lowerHalfBonus;
+    return { ...candidate, repeats, avgConfidence, score };
   }).sort((a, b) => b.score - a.score);
 
   const best = ranked[0];
   if (!best) return { status: 'needs_review', player: '', confidence: 0, source: 'apple-vision-ocr' };
 
   const confidence = Math.max(0, Math.min(1,
-    (best.repeats >= 2 ? 0.72 : 0.48) +
-    Math.min(best.confidence / Math.max(1, best.repeats), 1) * 0.18 +
-    Math.min(best.area * 8, 0.1)
+    (best.repeats >= 2 ? 0.74 : 0.56) +
+    Math.min(best.avgConfidence, 1) * 0.16 +
+    Math.min(best.area * 10, 0.1)
   ));
 
-  if (best.repeats < 2 && confidence < 0.62) {
+  // A single-frame result can still be accepted when the text itself is very clear
+  // and large/central. This helps with brief card reveals.
+  if (best.repeats < 2 && (confidence < 0.68 || best.avgConfidence < 0.72)) {
     return { status: 'needs_review', player: '', confidence, source: 'apple-vision-ocr' };
   }
 
@@ -426,7 +488,7 @@ async function extractClipPlayer(videoPath) {
       return { status: 'needs_review', player: '', confidence: 0, source: 'apple-vision-ocr' };
     }
 
-    const ratios = [0.55, 0.72, 0.86, 0.95];
+    const ratios = [0.08, 0.2, 0.32, 0.45, 0.58, 0.7, 0.82, 0.9, 0.96];
     const framePaths = [];
 
     for (let index = 0; index < ratios.length; index += 1) {
@@ -435,9 +497,9 @@ async function extractClipPlayer(videoPath) {
         `window.swishFrameExtractor.seek(${JSON.stringify(seconds)})`
       );
       const image = await frameWindow.webContents.capturePage();
-      const resized = image.getSize().width > 1280 ? image.resize({ width: 1280 }) : image;
+      const resized = image.getSize().width > 1600 ? image.resize({ width: 1600 }) : image;
       const framePath = path.join(tempDir, `frame-${index + 1}.jpg`);
-      fs.writeFileSync(framePath, resized.toJPEG(78));
+      fs.writeFileSync(framePath, resized.toJPEG(82));
       framePaths.push(framePath);
     }
 
