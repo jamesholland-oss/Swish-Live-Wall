@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+    video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  </style>
+</head>
+<body>
+  <video id="video" muted playsinline preload="auto"></video>
+  <script>
+    const video = document.getElementById('video');
+
+    window.swishFrameExtractor = {
+      load(src) {
+        return new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Video metadata timeout')), 15000);
+          const cleanup = () => {
+            clearTimeout(timeout);
+            video.onloadedmetadata = null;
+            video.onerror = null;
+          };
+          video.onloadedmetadata = () => {
+            cleanup();
+            resolve(Number.isFinite(video.duration) ? video.duration : 0);
+          };
+          video.onerror = () => {
+            cleanup();
+            reject(new Error('Unable to load replay video'));
+          };
+          video.src = src;
+          video.load();
+        });
+      },
+      seek(seconds) {
+        return new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Video seek timeout')), 8000);
+          const cleanup = () => {
+            clearTimeout(timeout);
+            video.onseeked = null;
+            video.onerror = null;
+          };
+          video.onseeked = () => {
+            const done = () => {
+              cleanup();
+              resolve(true);
+            };
+            if (typeof video.requestVideoFrameCallback === 'function') {
+              video.requestVideoFrameCallback(() => done());
+            } else {
+              requestAnimationFrame(() => requestAnimationFrame(done));
+            }
+          };
+          video.onerror = () => {
+            cleanup();
+            reject(new Error('Unable to seek replay video'));
+          };
+          video.currentTime = Math.max(0, Number(seconds) || 0);
+        });
+      }
+    };
+  </script>
+</body>
+</html>
