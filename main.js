@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, session, net, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const { execFile } = require('child_process');
 const { pathToFileURL } = require('url');
 const { startAgent } = require('./agent/agent');
 
@@ -300,9 +302,108 @@ function configureLoginItem(role) {
   }
 }
 
-async function extractClipFrames(videoPath) {
-  if (!videoPath || !fs.existsSync(videoPath)) return [];
+function execFileText(command, args, timeout = 20000) {
+  return new Promise((resolve) => {
+    execFile(command, args, { timeout, maxBuffer: 4 * 1024 * 1024 }, (error, stdout = '', stderr = '') => {
+      resolve({ ok: !error, stdout: String(stdout), stderr: String(stderr), error });
+    });
+  });
+}
 
+function normalizeOcrCandidate(value) {
+  return String(value || '')
+    .replace(/[|]/g, 'I')
+    .replace(/[^A-Za-z.'’\- ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function likelyPlayerNameFromOcr(lines) {
+  const blocked = new Set([
+    'TOPPS', 'PANINI', 'PRIZM', 'CHROME', 'SELECT', 'OPTIC', 'ROOKIE', 'ROOKIE CARD',
+    'BOWMAN', 'DONRUSS', 'FINEST', 'MOSAIC', 'NATIONAL TREASURES', 'IMMACULATE',
+    'FLAWLESS', 'SPECTRA', 'REVOLUTION', 'ORIGINS', 'CERTIFIED', 'ABSOLUTE',
+    'CONTENDERS', 'HOOPS', 'SCORE', 'UPPER DECK', 'FLEER', 'SKYBOX', 'LEAF',
+    'AUTOGRAPH', 'SIGNATURE', 'REFRACTOR', 'INSERT', 'PARALLEL', 'CARD'
+  ]);
+
+  const grouped = new Map();
+  for (const line of Array.isArray(lines) ? lines : []) {
+    const text = normalizeOcrCandidate(line?.text);
+    if (!text || text.length < 4 || text.length > 40) continue;
+    const upper = text.toUpperCase();
+    if (blocked.has(upper)) continue;
+    if (/\b(?:TOPPS|PANINI|PRIZM|CHROME|ROOKIE|AUTOGRAPH|REFRACTOR|BOWMAN|DONRUSS|SELECT|OPTIC)\b/i.test(text)) continue;
+
+    const words = text.split(' ').filter(Boolean);
+    if (words.length < 2 || words.length > 4) continue;
+    if (words.some((word) => word.length < 2)) continue;
+
+    const key = upper.replace(/[.'’\-]/g, '').replace(/\s+/g, ' ').trim();
+    if (!key) continue;
+
+    const previous = grouped.get(key) || {
+      text,
+      frames: new Set(),
+      confidence: 0,
+      area: 0,
+      centerBonus: 0
+    };
+
+    previous.frames.add(Number(line?.frame) || 0);
+    previous.confidence += Math.max(0, Number(line?.confidence) || 0);
+    previous.area += Math.max(0, Number(line?.area) || 0);
+    const x = Number(line?.x);
+    if (Number.isFinite(x)) previous.centerBonus += Math.max(0, 1 - Math.abs(0.5 - x) * 2);
+    grouped.set(key, previous);
+  }
+
+  const ranked = [...grouped.values()].map((candidate) => {
+    const repeats = candidate.frames.size;
+    const score =
+      repeats * 4 +
+      candidate.confidence * 1.5 +
+      Math.min(candidate.area * 30, 2) +
+      candidate.centerBonus * 0.4;
+    return { ...candidate, repeats, score };
+  }).sort((a, b) => b.score - a.score);
+
+  const best = ranked[0];
+  if (!best) return { status: 'needs_review', player: '', confidence: 0, source: 'apple-vision-ocr' };
+
+  const confidence = Math.max(0, Math.min(1,
+    (best.repeats >= 2 ? 0.72 : 0.48) +
+    Math.min(best.confidence / Math.max(1, best.repeats), 1) * 0.18 +
+    Math.min(best.area * 8, 0.1)
+  ));
+
+  if (best.repeats < 2 && confidence < 0.62) {
+    return { status: 'needs_review', player: '', confidence, source: 'apple-vision-ocr' };
+  }
+
+  const player = best.text
+    .split(' ')
+    .map((word) => word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : word)
+    .join(' ')
+    .replace(/\bMc([a-z])/g, (_m, c) => `Mc${c.toUpperCase()}`);
+
+  return { status: 'matched', player, confidence, source: 'apple-vision-ocr' };
+}
+
+async function extractClipPlayer(videoPath) {
+  if (process.platform !== 'darwin' || !videoPath || !fs.existsSync(videoPath)) {
+    return { status: 'unavailable', player: '', confidence: 0, source: 'apple-vision-ocr' };
+  }
+
+  const helperPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'vision-ocr')
+    : path.join(__dirname, 'native', 'vision-ocr');
+
+  if (!fs.existsSync(helperPath)) {
+    return { status: 'unavailable', player: '', confidence: 0, source: 'apple-vision-ocr', error: 'Vision OCR helper is unavailable.' };
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'swish-clip-ocr-'));
   const frameWindow = new BrowserWindow({
     show: false,
     width: 1280,
@@ -321,29 +422,42 @@ async function extractClipFrames(videoPath) {
     const duration = Number(await frameWindow.webContents.executeJavaScript(
       `window.swishFrameExtractor.load(${JSON.stringify(fileUrl)})`
     ));
-    if (!Number.isFinite(duration) || duration <= 0) return [];
+    if (!Number.isFinite(duration) || duration <= 0) {
+      return { status: 'needs_review', player: '', confidence: 0, source: 'apple-vision-ocr' };
+    }
 
     const ratios = [0.55, 0.72, 0.86, 0.95];
-    const frames = [];
+    const framePaths = [];
 
-    for (const ratio of ratios) {
-      const seconds = Math.max(0, Math.min(duration - 0.1, duration * ratio));
+    for (let index = 0; index < ratios.length; index += 1) {
+      const seconds = Math.max(0, Math.min(duration - 0.1, duration * ratios[index]));
       await frameWindow.webContents.executeJavaScript(
         `window.swishFrameExtractor.seek(${JSON.stringify(seconds)})`
       );
       const image = await frameWindow.webContents.capturePage();
-      const resized = image.getSize().width > 768 ? image.resize({ width: 768 }) : image;
-      const jpeg = resized.toJPEG(62);
-      if (jpeg?.length) frames.push({
-        mimeType: 'image/jpeg',
-        data: jpeg.toString('base64'),
-        atSeconds: Number(seconds.toFixed(2))
-      });
+      const resized = image.getSize().width > 1280 ? image.resize({ width: 1280 }) : image;
+      const framePath = path.join(tempDir, `frame-${index + 1}.jpg`);
+      fs.writeFileSync(framePath, resized.toJPEG(78));
+      framePaths.push(framePath);
     }
 
-    return frames;
+    const result = await execFileText(helperPath, framePaths, 25000);
+    if (!result.ok) {
+      return {
+        status: 'error',
+        player: '',
+        confidence: 0,
+        source: 'apple-vision-ocr',
+        error: (result.stderr || result.error?.message || 'Local OCR failed.').slice(0, 300)
+      };
+    }
+
+    let lines = [];
+    try { lines = JSON.parse(result.stdout || '[]'); } catch (_) {}
+    return likelyPlayerNameFromOcr(lines);
   } finally {
     if (!frameWindow.isDestroyed()) frameWindow.destroy();
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
   }
 }
 
@@ -359,7 +473,7 @@ async function startAgentMode(config) {
     obsWebSocketPassword: config.obsWebSocketPassword,
     stateDir: path.join(app.getPath('userData'), 'agent'),
     heartbeatMs: 10000,
-    extractClipFrames,
+    extractClipPlayer,
     onEnrolled: () => {
       const latest = loadAppConfig();
       if (latest.agentEnrollmentKey) saveAppConfig({ agentEnrollmentKey: '' });
