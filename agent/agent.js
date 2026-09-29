@@ -86,14 +86,14 @@ async function appVersion(paths) {
 async function shadeMountStatus() {
   if (process.platform !== 'darwin') return { mounted: null, mountPath: '' };
   const mountResult = await execFilePromise('/sbin/mount', []);
-  const matchingLine = mountResult.stdout.split('\n').find((line) => /shade/i.test(line));
+  const matchingLine = mountResult.stdout.split('\n').find((line) => /(shade|swish drive)/i.test(line));
   if (matchingLine) {
     const match = matchingLine.match(/ on (.+?) \(/);
     return { mounted: true, mountPath: match?.[1] || '' };
   }
   try {
     const volumes = fs.readdirSync('/Volumes', { withFileTypes: true });
-    const shadeVolume = volumes.find((entry) => /shade/i.test(entry.name));
+    const shadeVolume = volumes.find((entry) => /(shade|swish drive)/i.test(entry.name));
     if (shadeVolume) return { mounted: true, mountPath: path.join('/Volumes', shadeVolume.name) };
   } catch (_) {}
   return { mounted: false, mountPath: '' };
@@ -122,10 +122,78 @@ async function waitForStableFile(filePath, attempts = 24, delayMs = 500) {
   }
 }
 
+function roomMediaDirectoryFromObsPath(sourcePath, kind) {
+  const sourceDir = path.dirname(sourcePath);
+  const parsed = path.parse(sourceDir);
+  const relativeDir = sourceDir.slice(parsed.root.length);
+  const parts = relativeDir.split(path.sep).filter(Boolean);
+
+  let vodIndex = -1;
+  for (let index = parts.length - 1; index >= 1; index -= 1) {
+    if (/^vods?$/i.test(parts[index]) && /^content$/i.test(parts[index - 1])) {
+      vodIndex = index;
+      break;
+    }
+  }
+
+  if (vodIndex < 0) return '';
+  if (kind === 'clip') parts[vodIndex] = 'CLIPS';
+  else if (kind !== 'vod') return '';
+
+  return path.join(parsed.root || path.sep, ...parts);
+}
+
 async function destinationForMedia(sourcePath, kind) {
+  const sourceStat = await waitForStableFile(sourcePath);
+  if (!sourceStat) {
+    return { destinationPath: '', attempted: true, verified: false, error: 'Source media file was not readable after save.' };
+  }
+
+  // Every room already points OBS at its own CONTENT/VODS folder. For replay
+  // clips, preserve that exact room path and swap only VODS -> CLIPS.
+  // Example:
+  // /Volumes/Swish Drive/1 - STREAM/8 - SWISH WAX/CONTENT/VODS/file.mp4
+  // becomes:
+  // /Volumes/Swish Drive/1 - STREAM/8 - SWISH WAX/CONTENT/CLIPS/file.mp4
+  const roomDestinationDir = roomMediaDirectoryFromObsPath(sourcePath, kind);
+  if (kind === 'clip' && roomDestinationDir) {
+    try {
+      await fs.promises.mkdir(roomDestinationDir, { recursive: true });
+    } catch (err) {
+      return { destinationPath: '', attempted: true, verified: false, sourceStat, error: `Unable to create room CLIPS folder: ${err.message}` };
+    }
+
+    const fileName = path.basename(sourcePath);
+    let destinationPath = path.join(roomDestinationDir, fileName);
+
+    try {
+      const existing = await fs.promises.stat(destinationPath);
+      if (existing.isFile() && existing.size === sourceStat.size) {
+        return { destinationPath, attempted: true, verified: true, sourceStat };
+      }
+
+      const parsed = path.parse(fileName);
+      destinationPath = path.join(roomDestinationDir, `${parsed.name}-${Date.now()}${parsed.ext}`);
+    } catch (_) {}
+
+    try {
+      await fs.promises.copyFile(sourcePath, destinationPath);
+      const destinationStat = await fs.promises.stat(destinationPath);
+      return {
+        destinationPath,
+        attempted: true,
+        verified: destinationStat.isFile() && destinationStat.size === sourceStat.size,
+        sourceStat,
+        error: destinationStat.size === sourceStat.size ? '' : 'Room CLIPS copy size did not match the local file.'
+      };
+    } catch (err) {
+      return { destinationPath, attempted: true, verified: false, sourceStat, error: `Room CLIPS copy failed: ${err.message}` };
+    }
+  }
+
   const mount = await shadeMountStatus();
   if (!mount.mounted || !mount.mountPath) {
-    return { destinationPath: '', attempted: true, verified: false, error: 'Shade storage is not mounted.' };
+    return { destinationPath: '', attempted: true, verified: false, sourceStat, error: 'Shade storage is not mounted.' };
   }
 
   const folder = kind === 'clip' ? 'CLIPS' : 'VOD';
@@ -133,12 +201,7 @@ async function destinationForMedia(sourcePath, kind) {
   try {
     await fs.promises.mkdir(destinationDir, { recursive: true });
   } catch (err) {
-    return { destinationPath: '', attempted: true, verified: false, error: `Unable to create Shade/${folder}: ${err.message}` };
-  }
-
-  const sourceStat = await waitForStableFile(sourcePath);
-  if (!sourceStat) {
-    return { destinationPath: '', attempted: true, verified: false, error: 'Source media file was not readable after save.' };
+    return { destinationPath: '', attempted: true, verified: false, sourceStat, error: `Unable to create Shade/${folder}: ${err.message}` };
   }
 
   const fileName = path.basename(sourcePath);
