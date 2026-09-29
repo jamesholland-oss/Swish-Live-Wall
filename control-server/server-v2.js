@@ -783,6 +783,31 @@ function clipPlayerSummary(media) {
   return 'Player: Unknown / Needs Review';
 }
 
+function clipOcrDiagnostics(media) {
+  const recognition = media?.playerRecognition;
+  if (recognition?.player && Number(recognition.confidence) >= 0.55) return [];
+  const diagnostics = recognition?.diagnostics;
+  if (!diagnostics) {
+    const fallbackError = recognition?.error ? `OCR error: ${recognition.error}` : 'OCR diagnostics: unavailable';
+    return [fallbackError];
+  }
+
+  const framesAttempted = Number(diagnostics.framesAttempted) || 0;
+  const framesCaptured = Number(diagnostics.framesCaptured) || 0;
+  const lineCount = Number(diagnostics.ocrLineCount) || 0;
+  const lines = [
+    `OCR: ${framesCaptured}/${framesAttempted || framesCaptured} frames • ${lineCount} lines • stage ${diagnostics.stage || 'unknown'}`
+  ];
+
+  if (Array.isArray(diagnostics.topText) && diagnostics.topText.length) {
+    lines.push(`Top OCR: ${diagnostics.topText.slice(0, 8).join(' | ')}`);
+  }
+
+  const error = diagnostics.error || recognition?.error || '';
+  if (error) lines.push(`OCR error: ${error}`);
+  return lines;
+}
+
 function clipHitSummary(media) {
   const hit = media?.hit || null;
   if (!hit) return 'Card: Waiting for hit metadata';
@@ -886,6 +911,7 @@ async function sendClipSlack(media) {
     media.streamName ? `Channel: ${media.streamName}${media.platform ? ` (${media.platform})` : ''}` : '',
     media.currentBreak ? `Break: ${media.currentBreak}` : '',
     clipPlayerSummary(media),
+    ...clipOcrDiagnostics(media),
     `File: ${media.fileName}`,
     `Local save: ${media.localSaved ? '✓' : '⚠'}`,
     shadeLine
@@ -1102,7 +1128,19 @@ async function ingestAgentMedia(req, res) {
           player: String(body.playerRecognition.player || '').slice(0, 120),
           confidence: Math.max(0, Math.min(1, Number(body.playerRecognition.confidence) || 0)),
           source: String(body.playerRecognition.source || 'apple-vision-ocr').slice(0, 80),
-          error: String(body.playerRecognition.error || '').slice(0, 300)
+          error: String(body.playerRecognition.error || '').slice(0, 300),
+          diagnostics: body.playerRecognition.diagnostics && typeof body.playerRecognition.diagnostics === 'object'
+            ? {
+                stage: String(body.playerRecognition.diagnostics.stage || '').slice(0, 80),
+                framesAttempted: Math.max(0, Math.min(20, Number(body.playerRecognition.diagnostics.framesAttempted) || 0)),
+                framesCaptured: Math.max(0, Math.min(20, Number(body.playerRecognition.diagnostics.framesCaptured) || 0)),
+                ocrLineCount: Math.max(0, Math.min(500, Number(body.playerRecognition.diagnostics.ocrLineCount) || 0)),
+                topText: Array.isArray(body.playerRecognition.diagnostics.topText)
+                  ? body.playerRecognition.diagnostics.topText.map((value) => String(value).slice(0, 80)).filter(Boolean).slice(0, 12)
+                  : [],
+                error: String(body.playerRecognition.diagnostics.error || '').slice(0, 300)
+              }
+            : null
         }
       : null
   };
