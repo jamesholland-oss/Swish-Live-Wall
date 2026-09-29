@@ -301,6 +301,33 @@ async function pingControlServer() {
   }
 }
 
+async function renameRoomDisplay(room) {
+  if (!room?.roomId) return;
+
+  const nextName = window.prompt('Room display name', room.roomName || '');
+  if (nextName == null) return;
+
+  const displayName = String(nextName || '').trim();
+  if (!displayName) {
+    window.alert('Room name cannot be blank.');
+    return;
+  }
+
+  try {
+    await fetchJson(`/api/rooms/${encodeURIComponent(room.roomId)}/settings`, {
+      method: 'POST',
+      body: JSON.stringify({ displayName })
+    });
+
+    await refreshWallStatuses();
+    await refreshControlData();
+    selectedRoomId = room.roomId;
+    renderRooms(true);
+  } catch (err) {
+    window.alert(`Unable to rename room: ${err.message}`);
+  }
+}
+
 async function removeRoomFromMonitoring(room) {
   if (!room?.agentId) return;
 
@@ -687,6 +714,12 @@ renderRoomDetail = function renderRoomDetailWithAdmin(force = false) {
     if (!bar) {
       bar = document.createElement('div');
       bar.className = 'room-admin-bar';
+
+      const rename = document.createElement('button');
+      rename.className = 'ghost';
+      rename.textContent = 'Rename Room';
+      rename.addEventListener('click', () => renameRoomDisplay(room));
+      bar.append(rename);
 
       const remove = document.createElement('button');
       remove.className = 'danger-action';
