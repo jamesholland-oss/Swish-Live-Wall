@@ -1,0 +1,83 @@
+name: Release beta.21
+
+on:
+  push:
+    branches:
+      - v2-control-plane
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Release beta.21'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            command: npm run dist:mac
+            artifact: swish-control-macos-beta21
+          - os: windows-latest
+            command: npm run dist:win
+            artifact: swish-control-windows-beta21
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout beta.21
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate
+        run: npm run check
+
+      - name: Build
+        run: ${{ matrix.command }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/**
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Release beta.21'
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download builds
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish v2.0.0-beta.21
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.0.0-beta.21
+          name: Swish Control v2.0.0-beta.21
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          body: |
+            Swish Control beta.21.
+
+            Adds replay-frame player recognition for clip Slack notifications.
+            Samples four frames from each replay in the installed agent, identifies the
+            player on the presented sports card through server-side vision, and reports
+            Player: <name> in Slack. Removes the redundant Replay Buffer trigger line.
+            Existing local-save and Shade routing behavior is unchanged.
+          files: |
+            release-assets/**/*.dmg
+            release-assets/**/*.zip
+            release-assets/**/*.exe
