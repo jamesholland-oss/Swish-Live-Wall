@@ -944,9 +944,17 @@ async function sendClipMetadataSlack(media) {
   }
 }
 
+function clipReadyForSlack(media) {
+  if (!media || media.kind !== 'clip') return false;
+  if (media.slackSentAt) return false;
+  if (!media.shadeVerified || !media.shadeShareUrl) return false;
+  const recognition = media.playerRecognition;
+  if (!recognition || !recognition.status) return false;
+  return true;
+}
+
 async function sendClipSlack(media) {
-  if (!SLACK_CLIP_WEBHOOK_URL || media.kind !== 'clip') return false;
-  if (!media.shadeShareUrl || media.slackSentAt) return false;
+  if (!SLACK_CLIP_WEBHOOK_URL || !clipReadyForSlack(media)) return false;
 
   const lines = [
     `🎬 Clip Created — ${media.roomName}`,
