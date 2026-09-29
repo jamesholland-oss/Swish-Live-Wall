@@ -1,6 +1,6 @@
 {
   "name": "swish-live-wall",
-  "version": "2.0.0-beta.21",
+  "version": "2.0.0-beta.22",
   "description": "Swish Control — live multiview, protected room health dashboard, incidents, and background room agent",
   "main": "main.js",
   "author": "Swish Breaks",
@@ -41,6 +41,12 @@
     ],
     "mac": {
       "category": "public.app-category.video",
+      "extraResources": [
+        {
+          "from": "native/vision-ocr",
+          "to": "vision-ocr"
+        }
+      ],
       "target": [
         "dmg",
         "zip"
