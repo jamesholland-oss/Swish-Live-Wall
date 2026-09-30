@@ -323,7 +323,9 @@ function likelyPlayerNameFromOcr(lines) {
     'FLAWLESS', 'SPECTRA', 'REVOLUTION', 'ORIGINS', 'CERTIFIED', 'ABSOLUTE',
     'CONTENDERS', 'HOOPS', 'SCORE', 'UPPER DECK', 'FLEER', 'SKYBOX', 'LEAF',
     'AUTOGRAPH', 'SIGNATURE', 'REFRACTOR', 'INSERT', 'PARALLEL', 'CARD', 'SWISH',
-    'SWISH BREAKS', 'PACK', 'BUY A', 'GET A'
+    'SWISH BREAKS', 'PACK', 'BUY A', 'GET A',
+    'LIVE', 'FOLLOW', 'SHOP', 'BUY', 'GET', 'WATCH', 'BREAKS', 'STREAM',
+    'STREAMING', 'SOLD', 'SALE', 'DEAL', 'DEALS', 'HIT', 'HITS'
   ]);
 
   const raw = (Array.isArray(lines) ? lines : []).map((line) => ({
@@ -371,6 +373,7 @@ function likelyPlayerNameFromOcr(lines) {
     }
   }
 
+  const maxFrame = raw.reduce((max, line) => Math.max(max, line.frame), 0);
   const grouped = new Map();
   for (const line of merged) {
     const text = line.text;
@@ -380,9 +383,13 @@ function likelyPlayerNameFromOcr(lines) {
     if (/\b(?:TOPPS|PANINI|PRIZM|CHROME|ROOKIE|AUTOGRAPH|REFRACTOR|BOWMAN|DONRUSS|SELECT|OPTIC|SWISH|PACK)\b/i.test(text)) continue;
 
     const words = text.split(' ').filter(Boolean);
-    if (words.length < 2 || words.length > 4) continue;
+    if (words.length < 1 || words.length > 4) continue;
     if (words.some((word) => word.length < 2)) continue;
     if (!words.every((word) => /^[A-Za-z.'’\-]+$/.test(word))) continue;
+
+    // Vision sometimes reads only the surname on a card. Allow a strong,
+    // repeated single word, but keep obvious overlay/UI words blocked.
+    if (words.length === 1 && text.length < 4) continue;
 
     const key = upper.replace(/[.'’\-]/g, '').replace(/\s+/g, ' ').trim();
     if (!key) continue;
@@ -394,6 +401,8 @@ function likelyPlayerNameFromOcr(lines) {
       area: 0,
       centerBonus: 0,
       lowerHalfBonus: 0,
+      recencyBonus: 0,
+      latestFrame: 0,
       samples: 0
     };
 
@@ -401,6 +410,8 @@ function likelyPlayerNameFromOcr(lines) {
     previous.confidence += line.confidence;
     previous.area += line.area;
     previous.samples += 1;
+    previous.latestFrame = Math.max(previous.latestFrame, line.frame);
+    previous.recencyBonus += maxFrame > 0 ? line.frame / maxFrame : 1;
 
     if (Number.isFinite(line.x)) {
       // The held-up card is usually centered; signage/background text is often wider/off-center.
@@ -417,13 +428,17 @@ function likelyPlayerNameFromOcr(lines) {
   const ranked = [...grouped.values()].map((candidate) => {
     const repeats = candidate.frames.size;
     const avgConfidence = candidate.confidence / Math.max(1, candidate.samples);
+    const latestFrameRatio = maxFrame > 0 ? candidate.latestFrame / maxFrame : 1;
+    const avgRecency = candidate.recencyBonus / Math.max(1, candidate.samples);
     const score =
       repeats * 4.5 +
       avgConfidence * 2.2 +
       Math.min(candidate.area * 60, 3.5) +
       candidate.centerBonus * 0.9 +
-      candidate.lowerHalfBonus;
-    return { ...candidate, repeats, avgConfidence, score };
+      candidate.lowerHalfBonus +
+      latestFrameRatio * 7.0 +
+      avgRecency * 2.5;
+    return { ...candidate, repeats, avgConfidence, latestFrameRatio, avgRecency, score };
   }).sort((a, b) => b.score - a.score);
 
   const best = ranked[0];
@@ -435,9 +450,13 @@ function likelyPlayerNameFromOcr(lines) {
     Math.min(best.area * 10, 0.1)
   ));
 
-  // A single-frame result can still be accepted when the text itself is very clear
-  // and large/central. This helps with brief card reveals.
+  // A single-frame result can still be accepted when the text itself is very
+  // clear, but single-word names need repetition unless Vision is extremely sure.
+  const bestWords = best.text.split(' ').filter(Boolean);
   if (best.repeats < 2 && (confidence < 0.68 || best.avgConfidence < 0.72)) {
+    return { status: 'needs_review', player: '', confidence, source: 'apple-vision-ocr' };
+  }
+  if (bestWords.length === 1 && best.repeats < 2 && best.avgConfidence < 0.90) {
     return { status: 'needs_review', player: '', confidence, source: 'apple-vision-ocr' };
   }
 
@@ -501,7 +520,7 @@ async function extractClipPlayer(videoPath) {
       error,
       diagnostics: {
         stage: 'native-avfoundation',
-        framesAttempted: 9,
+        framesAttempted: 12,
         framesCaptured: 0,
         ocrLineCount: 0,
         topText: [],
