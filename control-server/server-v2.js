@@ -1017,6 +1017,7 @@ async function sendClipSlack(media) {
   if (!SLACK_CLIP_WEBHOOK_URL || !clipReadyForSlack(media)) return false;
 
   const lines = [
+    `Room: ${media.roomName}`,
     clipPlayerSummary(media),
     `Clip Time: ${clipTimeLabel(media.createdAt)}`,
     'Shade: Saved ✓'
