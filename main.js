@@ -323,10 +323,7 @@ function likelyPlayerNameFromOcr(lines) {
     'FLAWLESS', 'SPECTRA', 'REVOLUTION', 'ORIGINS', 'CERTIFIED', 'ABSOLUTE',
     'CONTENDERS', 'HOOPS', 'SCORE', 'UPPER DECK', 'FLEER', 'SKYBOX', 'LEAF',
     'AUTOGRAPH', 'SIGNATURE', 'REFRACTOR', 'INSERT', 'PARALLEL', 'CARD', 'SWISH',
-    'SWISH BREAKS', 'PACK', 'BUY A', 'GET A', 'FOLLOW', 'FOLLOW OUR SHOP', 'OUR SHOP',
-    'SHOP', 'BUY', 'GET', 'STOPPING', 'IS STOPPING', 'LIVE', 'WATCH', 'SUBSCRIBE',
-    'INSTAGRAM', 'TIKTOK', 'WHATNOT', 'FANATICS', 'BREAKING', 'BREAKS', 'STREAM',
-    'STREAMING', 'LINK IN BIO', 'CLICK', 'SALE', 'DEAL', 'DEALS', 'SOLD OUT'
+    'SWISH BREAKS', 'PACK', 'BUY A', 'GET A'
   ]);
 
   const raw = (Array.isArray(lines) ? lines : []).map((line) => ({
@@ -380,7 +377,7 @@ function likelyPlayerNameFromOcr(lines) {
     if (!text || text.length < 4 || text.length > 40) continue;
     const upper = text.toUpperCase();
     if (blocked.has(upper)) continue;
-    if (/\b(?:TOPPS|PANINI|PRIZM|CHROME|ROOKIE|AUTOGRAPH|REFRACTOR|BOWMAN|DONRUSS|SELECT|OPTIC|SWISH|PACK|FOLLOW|SHOP|BUY|GET|STOPPING|LIVE|WATCH|SUBSCRIBE|INSTAGRAM|TIKTOK|WHATNOT|FANATICS|BREAKING|BREAKS|STREAM|STREAMING|CLICK|SALE|DEALS?|SOLD)\b/i.test(text)) continue;
+    if (/\b(?:TOPPS|PANINI|PRIZM|CHROME|ROOKIE|AUTOGRAPH|REFRACTOR|BOWMAN|DONRUSS|SELECT|OPTIC|SWISH|PACK)\b/i.test(text)) continue;
 
     const words = text.split(' ').filter(Boolean);
     if (words.length < 2 || words.length > 4) continue;
