@@ -49,18 +49,31 @@ func recognize(image: CGImage, frame: Int) -> [OCRLine] {
 }
 
 func processVideo(path: String) -> OCRResult {
-    let ratios: [Double] = [0.08, 0.20, 0.32, 0.45, 0.58, 0.70, 0.82, 0.90, 0.96]
+    // Replay Buffer clips are saved immediately after the interesting card is
+    // shown, so sample densely near the end instead of sparsely across the
+    // entire replay. This gives Vision several chances to read the same card.
+    let offsetsFromEnd: [Double] = [30.0, 25.0, 21.0, 18.0, 15.0, 12.0, 10.0, 8.0, 6.0, 4.0, 2.0, 0.5]
     let url = URL(fileURLWithPath: path)
     let asset = AVURLAsset(url: url)
 
     let durationSeconds = CMTimeGetSeconds(asset.duration)
     guard durationSeconds.isFinite && durationSeconds > 0 else {
         return OCRResult(
-            framesAttempted: ratios.count,
+            framesAttempted: offsetsFromEnd.count,
             framesCaptured: 0,
             lines: [],
             errors: ["Unable to read replay duration with AVFoundation."]
         )
+    }
+
+    // Clamp short clips safely and remove duplicate timestamps introduced by
+    // clamping so one physical frame cannot artificially win by repetition.
+    var sampleSeconds: [Double] = []
+    for offset in offsetsFromEnd {
+        let seconds = max(0, min(durationSeconds - 0.05, durationSeconds - offset))
+        if !sampleSeconds.contains(where: { abs($0 - seconds) < 0.05 }) {
+            sampleSeconds.append(seconds)
+        }
     }
 
     let generator = AVAssetImageGenerator(asset: asset)
@@ -73,8 +86,7 @@ func processVideo(path: String) -> OCRResult {
     var captured = 0
     var errors: [String] = []
 
-    for (index, ratio) in ratios.enumerated() {
-        let seconds = max(0, min(durationSeconds - 0.05, durationSeconds * ratio))
+    for (index, seconds) in sampleSeconds.enumerated() {
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
 
         do {
@@ -87,7 +99,7 @@ func processVideo(path: String) -> OCRResult {
     }
 
     return OCRResult(
-        framesAttempted: ratios.count,
+        framesAttempted: sampleSeconds.count,
         framesCaptured: captured,
         lines: lines,
         errors: errors
