@@ -380,6 +380,10 @@ function likelyPlayerNameFromOcr(lines) {
     if (!text || text.length < 4 || text.length > 40) continue;
     const upper = text.toUpperCase();
     if (blocked.has(upper)) continue;
+    // Handles such as SWISHJAYB normalize into one word, so a word-boundary
+    // SWISH filter is not enough. Never let Swish branding/social handles be
+    // treated as a player candidate.
+    if (upper.startsWith('SWISH')) continue;
     if (/\b(?:TOPPS|PANINI|PRIZM|CHROME|ROOKIE|AUTOGRAPH|REFRACTOR|BOWMAN|DONRUSS|SELECT|OPTIC|SWISH|PACK)\b/i.test(text)) continue;
 
     const words = text.split(' ').filter(Boolean);
@@ -430,21 +434,50 @@ function likelyPlayerNameFromOcr(lines) {
     const avgConfidence = candidate.confidence / Math.max(1, candidate.samples);
     const latestFrameRatio = maxFrame > 0 ? candidate.latestFrame / maxFrame : 1;
     const avgRecency = candidate.recencyBonus / Math.max(1, candidate.samples);
+
+    // A real card is normally held in front of the card camera for several
+    // consecutive samples. Measure that dwell time directly. This makes the
+    // last card that is held on-camera dominate over older cards and one-frame
+    // flashes while still giving a modest preference to later frames.
+    const orderedFrames = [...candidate.frames].sort((a, b) => a - b);
+    let longestRun = orderedFrames.length ? 1 : 0;
+    let currentRun = orderedFrames.length ? 1 : 0;
+    for (let i = 1; i < orderedFrames.length; i += 1) {
+      if (orderedFrames[i] === orderedFrames[i - 1] + 1) currentRun += 1;
+      else currentRun = 1;
+      longestRun = Math.max(longestRun, currentRun);
+    }
+
+    const wordCount = candidate.text.split(' ').filter(Boolean).length;
+    const fullNameBonus = wordCount >= 2 ? 1.5 : 0;
+
     const score =
-      repeats * 4.5 +
+      repeats * 7.0 +
+      longestRun * 6.0 +
       avgConfidence * 2.2 +
       Math.min(candidate.area * 60, 3.5) +
       candidate.centerBonus * 0.9 +
       candidate.lowerHalfBonus +
-      latestFrameRatio * 7.0 +
-      avgRecency * 2.5;
-    return { ...candidate, repeats, avgConfidence, latestFrameRatio, avgRecency, score };
+      latestFrameRatio * 3.0 +
+      avgRecency * 1.5 +
+      fullNameBonus;
+
+    return {
+      ...candidate,
+      repeats,
+      longestRun,
+      avgConfidence,
+      latestFrameRatio,
+      avgRecency,
+      score
+    };
   }).sort((a, b) => b.score - a.score);
 
   const best = ranked[0];
   const debugFor = (candidate, reason) => ({
     selectedCandidate: candidate?.text || '',
     selectedRepeats: candidate?.repeats || 0,
+    selectedLongestRun: candidate?.longestRun || 0,
     selectedAvgConfidence: candidate?.avgConfidence || 0,
     selectedScore: candidate?.score || 0,
     selectedLatestFrameRatio: candidate?.latestFrameRatio || 0,
@@ -606,6 +639,7 @@ async function extractClipPlayer(videoPath) {
       topText,
       selectedCandidate: String(decision.selectedCandidate || '').slice(0, 120),
       selectedRepeats: Math.max(0, Number(decision.selectedRepeats) || 0),
+      selectedLongestRun: Math.max(0, Number(decision.selectedLongestRun) || 0),
       selectedAvgConfidence: Math.max(0, Math.min(1, Number(decision.selectedAvgConfidence) || 0)),
       selectedScore: Math.max(0, Number(decision.selectedScore) || 0),
       selectedLatestFrameRatio: Math.max(0, Math.min(1, Number(decision.selectedLatestFrameRatio) || 0)),
