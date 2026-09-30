@@ -1,0 +1,92 @@
+name: Release beta.32
+
+on:
+  push:
+    branches:
+      - v2-control-plane
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Release beta.32'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            command: npm run dist:mac
+            artifact: swish-control-macos-beta32
+          - os: windows-latest
+            command: npm run dist:win
+            artifact: swish-control-windows-beta32
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout beta.32
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile native AVFoundation + Vision helper
+        if: runner.os == 'macOS'
+        run: swiftc native/VisionOCR.swift -O -framework Vision -framework AVFoundation -framework CoreGraphics -o native/vision-ocr
+
+      - name: Validate
+        run: npm run check
+
+      - name: Build
+        run: ${{ matrix.command }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/**
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Release beta.32'
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download builds
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish v2.0.0-beta.32
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.0.0-beta.32
+          name: Swish Control v2.0.0-beta.32
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          body: |
+            Swish Control beta.32.
+
+            Refines player-name recognition for the actual card-camera workflow:
+            - Apple Vision reads only the lower 52% of the composite replay frame
+            - Swish/social overlay text is explicitly rejected as a player candidate
+            - keeps the dense final-30-second scan from beta.30
+            - ranks the card held consistently across consecutive end-of-replay samples
+            - still gives a modest recency preference so the final held card wins
+            - keeps beta.31 OCR diagnostics, now including held-run length
+
+            Clip routing, CONTENT/CLIPS, Shade copy, monitoring, and dashboard behavior are unchanged.
+
+          files: |
+            release-assets/**/*.dmg
+            release-assets/**/*.zip
+            release-assets/**/*.exe
