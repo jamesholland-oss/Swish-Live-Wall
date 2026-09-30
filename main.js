@@ -442,7 +442,24 @@ function likelyPlayerNameFromOcr(lines) {
   }).sort((a, b) => b.score - a.score);
 
   const best = ranked[0];
-  if (!best) return { status: 'needs_review', player: '', confidence: 0, source: 'apple-vision-ocr' };
+  const debugFor = (candidate, reason) => ({
+    selectedCandidate: candidate?.text || '',
+    selectedRepeats: candidate?.repeats || 0,
+    selectedAvgConfidence: candidate?.avgConfidence || 0,
+    selectedScore: candidate?.score || 0,
+    selectedLatestFrameRatio: candidate?.latestFrameRatio || 0,
+    reason
+  });
+
+  if (!best) {
+    return {
+      status: 'needs_review',
+      player: '',
+      confidence: 0,
+      source: 'apple-vision-ocr',
+      debug: debugFor(null, 'no-valid-candidates')
+    };
+  }
 
   const confidence = Math.max(0, Math.min(1,
     (best.repeats >= 2 ? 0.74 : 0.56) +
@@ -454,10 +471,22 @@ function likelyPlayerNameFromOcr(lines) {
   // clear, but single-word names need repetition unless Vision is extremely sure.
   const bestWords = best.text.split(' ').filter(Boolean);
   if (best.repeats < 2 && (confidence < 0.68 || best.avgConfidence < 0.72)) {
-    return { status: 'needs_review', player: '', confidence, source: 'apple-vision-ocr' };
+    return {
+      status: 'needs_review',
+      player: '',
+      confidence,
+      source: 'apple-vision-ocr',
+      debug: debugFor(best, 'single-frame-confidence-too-low')
+    };
   }
   if (bestWords.length === 1 && best.repeats < 2 && best.avgConfidence < 0.90) {
-    return { status: 'needs_review', player: '', confidence, source: 'apple-vision-ocr' };
+    return {
+      status: 'needs_review',
+      player: '',
+      confidence,
+      source: 'apple-vision-ocr',
+      debug: debugFor(best, 'single-word-needs-repeat-or-very-high-confidence')
+    };
   }
 
   const player = best.text
@@ -466,7 +495,13 @@ function likelyPlayerNameFromOcr(lines) {
     .join(' ')
     .replace(/\bMc([a-z])/g, (_m, c) => `Mc${c.toUpperCase()}`);
 
-  return { status: 'matched', player, confidence, source: 'apple-vision-ocr' };
+  return {
+    status: 'matched',
+    player,
+    confidence,
+    source: 'apple-vision-ocr',
+    debug: debugFor(best, 'matched')
+  };
 }
 
 async function extractClipPlayer(videoPath) {
@@ -557,16 +592,24 @@ async function extractClipPlayer(videoPath) {
     .slice(0, 12);
 
   const recognition = likelyPlayerNameFromOcr(lines);
+  const decision = recognition?.debug && typeof recognition.debug === 'object' ? recognition.debug : {};
+  const { debug: _debug, ...recognitionResult } = recognition;
   const diagnosticError = [parseError, ...helperErrors].filter(Boolean).join(' | ').slice(0, 300);
 
   return {
-    ...recognition,
+    ...recognitionResult,
     diagnostics: {
       stage: parseError ? 'native-parse' : (framesCaptured > 0 ? 'complete-native' : 'native-avfoundation'),
       framesAttempted,
       framesCaptured,
       ocrLineCount: lines.length,
       topText,
+      selectedCandidate: String(decision.selectedCandidate || '').slice(0, 120),
+      selectedRepeats: Math.max(0, Number(decision.selectedRepeats) || 0),
+      selectedAvgConfidence: Math.max(0, Math.min(1, Number(decision.selectedAvgConfidence) || 0)),
+      selectedScore: Math.max(0, Number(decision.selectedScore) || 0),
+      selectedLatestFrameRatio: Math.max(0, Math.min(1, Number(decision.selectedLatestFrameRatio) || 0)),
+      decisionReason: String(decision.reason || '').slice(0, 120),
       error: diagnosticError
     }
   };
