@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { createGoogleWorkspaceAuth } = require('./google-auth');
 
 const PORT = Number(process.env.PORT || 8787);
-const SERVER_VERSION = '2.0.0-beta.31';
+const SERVER_VERSION = '2.0.0-beta.32';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
@@ -893,10 +893,11 @@ function clipOcrDiagnostics(media) {
 
   if (diagnostics.selectedCandidate) {
     const repeats = Number(diagnostics.selectedRepeats) || 0;
+    const longestRun = Number(diagnostics.selectedLongestRun) || 0;
     const avgConfidence = Number(diagnostics.selectedAvgConfidence) || 0;
     const score = Number(diagnostics.selectedScore) || 0;
     lines.push(
-      `Candidate: ${diagnostics.selectedCandidate} • repeats ${repeats} • OCR conf ${avgConfidence.toFixed(2)} • score ${score.toFixed(2)}`
+      `Candidate: ${diagnostics.selectedCandidate} • repeats ${repeats} • held-run ${longestRun} • OCR conf ${avgConfidence.toFixed(2)} • score ${score.toFixed(2)}`
     );
   }
 
@@ -1259,6 +1260,7 @@ async function ingestAgentMedia(req, res) {
                   : [],
                 selectedCandidate: String(body.playerRecognition.diagnostics.selectedCandidate || '').slice(0, 120),
                 selectedRepeats: Math.max(0, Math.min(20, Number(body.playerRecognition.diagnostics.selectedRepeats) || 0)),
+                selectedLongestRun: Math.max(0, Math.min(20, Number(body.playerRecognition.diagnostics.selectedLongestRun) || 0)),
                 selectedAvgConfidence: Math.max(0, Math.min(1, Number(body.playerRecognition.diagnostics.selectedAvgConfidence) || 0)),
                 selectedScore: Math.max(0, Number(body.playerRecognition.diagnostics.selectedScore) || 0),
                 selectedLatestFrameRatio: Math.max(0, Math.min(1, Number(body.playerRecognition.diagnostics.selectedLatestFrameRatio) || 0)),
