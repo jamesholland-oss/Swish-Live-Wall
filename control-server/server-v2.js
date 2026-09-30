@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { createGoogleWorkspaceAuth } = require('./google-auth');
 
 const PORT = Number(process.env.PORT || 8787);
-const SERVER_VERSION = '2.0.0-beta.28';
+const SERVER_VERSION = '2.0.0-beta.31';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
@@ -874,7 +874,6 @@ function clipPlayerSummary(media) {
 
 function clipOcrDiagnostics(media) {
   const recognition = media?.playerRecognition;
-  if (recognition?.player && Number(recognition.confidence) >= 0.55) return [];
   const diagnostics = recognition?.diagnostics;
   if (!diagnostics) {
     const fallbackError = recognition?.error ? `OCR error: ${recognition.error}` : 'OCR diagnostics: unavailable';
@@ -890,6 +889,19 @@ function clipOcrDiagnostics(media) {
 
   if (Array.isArray(diagnostics.topText) && diagnostics.topText.length) {
     lines.push(`Top OCR: ${diagnostics.topText.slice(0, 8).join(' | ')}`);
+  }
+
+  if (diagnostics.selectedCandidate) {
+    const repeats = Number(diagnostics.selectedRepeats) || 0;
+    const avgConfidence = Number(diagnostics.selectedAvgConfidence) || 0;
+    const score = Number(diagnostics.selectedScore) || 0;
+    lines.push(
+      `Candidate: ${diagnostics.selectedCandidate} • repeats ${repeats} • OCR conf ${avgConfidence.toFixed(2)} • score ${score.toFixed(2)}`
+    );
+  }
+
+  if (diagnostics.decisionReason) {
+    lines.push(`Decision: ${diagnostics.decisionReason}`);
   }
 
   const error = diagnostics.error || recognition?.error || '';
@@ -1007,6 +1019,7 @@ async function sendClipSlack(media) {
     `🎬 Clip Created — ${media.roomName}`,
     `DATE/Time: ${clipTimeLabel(media.createdAt)}`,
     clipPlayerSummary(media),
+    ...clipOcrDiagnostics(media),
     'Shade: Saved ✓',
     `Link: ${media.shadeShareUrl || 'Unavailable'}`
   ];
@@ -1244,6 +1257,12 @@ async function ingestAgentMedia(req, res) {
                 topText: Array.isArray(body.playerRecognition.diagnostics.topText)
                   ? body.playerRecognition.diagnostics.topText.map((value) => String(value).slice(0, 80)).filter(Boolean).slice(0, 12)
                   : [],
+                selectedCandidate: String(body.playerRecognition.diagnostics.selectedCandidate || '').slice(0, 120),
+                selectedRepeats: Math.max(0, Math.min(20, Number(body.playerRecognition.diagnostics.selectedRepeats) || 0)),
+                selectedAvgConfidence: Math.max(0, Math.min(1, Number(body.playerRecognition.diagnostics.selectedAvgConfidence) || 0)),
+                selectedScore: Math.max(0, Number(body.playerRecognition.diagnostics.selectedScore) || 0),
+                selectedLatestFrameRatio: Math.max(0, Math.min(1, Number(body.playerRecognition.diagnostics.selectedLatestFrameRatio) || 0)),
+                decisionReason: String(body.playerRecognition.diagnostics.decisionReason || '').slice(0, 120),
                 error: String(body.playerRecognition.diagnostics.error || '').slice(0, 300)
               }
             : null
