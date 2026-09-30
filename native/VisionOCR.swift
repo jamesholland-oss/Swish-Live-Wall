@@ -26,6 +26,12 @@ func recognize(image: CGImage, frame: Int) -> [OCRLine] {
     request.minimumTextHeight = 0.010
     request.recognitionLanguages = ["en-US"]
 
+    // The stream is a vertical composite: host/branding lives above the card
+    // camera. Player names are on the physical card in the lower portion.
+    // Vision coordinates use a bottom-left origin, so this reads only the
+    // lower 52% of the full replay frame and ignores host/social/ticker text.
+    request.regionOfInterest = CGRect(x: 0.0, y: 0.0, width: 1.0, height: 0.52)
+
     let handler = VNImageRequestHandler(cgImage: image, options: [:])
     do {
         try handler.perform([request])
