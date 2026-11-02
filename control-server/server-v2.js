@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { createGoogleWorkspaceAuth } = require('./google-auth');
 
 const PORT = Number(process.env.PORT || 8787);
-const SERVER_VERSION = '2.0.0-beta.37';
+const SERVER_VERSION = '2.0.0-beta.38';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
@@ -620,7 +620,10 @@ async function resolveShadeAssetPath(localPath) {
 
   if (!driveId) throw new Error('Shade drive ID could not be resolved.');
 
-  const relative = parts.relative.split('/').map(encodeURIComponent).join('/');
+  // Keep the Shade asset path as a normal filesystem-style path.
+  // URLSearchParams will handle HTTP encoding later. Encoding here would turn
+  // spaces into literal "%20" inside the Shade path and prevent asset lookup.
+  const relative = String(parts.relative || '').replace(/^\/+/, '');
   const shadePath = `/${driveId}/${relative}`.replace(/\/$/, '');
   return { driveId, shadePath };
 }
