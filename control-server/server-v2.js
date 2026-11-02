@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { createGoogleWorkspaceAuth } = require('./google-auth');
 
 const PORT = Number(process.env.PORT || 8787);
-const SERVER_VERSION = '2.0.0-beta.33';
+const SERVER_VERSION = '2.0.0-beta.34';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
@@ -14,6 +14,10 @@ const SLACK_WEBHOOK_URL = String(process.env.SLACK_WEBHOOK_URL || '');
 const SLACK_CLIP_WEBHOOK_URL = String(process.env.SLACK_CLIP_WEBHOOK_URL || '');
 const BUSINESS_INGEST_KEY = String(process.env.BUSINESS_INGEST_KEY || '');
 const SHADE_WEBHOOK_KEY = String(process.env.SHADE_WEBHOOK_KEY || '');
+const SHADE_API_KEY = String(process.env.SHADE_API_KEY || '').trim();
+const SHADE_WORKSPACE_ID = String(process.env.SHADE_WORKSPACE_ID || '').trim();
+const SHADE_DRIVE_ID = String(process.env.SHADE_DRIVE_ID || '').trim();
+const SHADE_MOUNT_ROOT = String(process.env.SHADE_MOUNT_ROOT || '').trim();
 const GOOGLE_WORKSPACE_DOMAIN = String(process.env.GOOGLE_WORKSPACE_DOMAIN || '').trim().toLowerCase();
 const GOOGLE_DEFAULT_ROLE_RAW = String(process.env.GOOGLE_DEFAULT_ROLE || 'viewer').trim().toLowerCase();
 const SESSION_HOURS = Math.max(1, Number(process.env.CONTROL_SESSION_HOURS || 12));
@@ -21,6 +25,13 @@ const OFFLINE_AFTER_MS = Math.max(15000, Number(process.env.OFFLINE_AFTER_MS || 
 const SAMPLE_INTERVAL_MS = Math.max(60000, Number(process.env.SAMPLE_INTERVAL_MS || 300000));
 const MAX_SAMPLES = Math.max(288, Number(process.env.MAX_SAMPLES_PER_AGENT || 2016));
 const SHADE_LINK_GRACE_MS = Math.max(5000, Number(process.env.SHADE_LINK_GRACE_MS || 30000));
+const SHADE_LINK_POLL_INTERVAL_MS = Math.max(2000, Number(process.env.SHADE_LINK_POLL_INTERVAL_MS || 5000));
+const SHADE_LINK_TIMEOUT_MS = Math.max(15000, Number(process.env.SHADE_LINK_TIMEOUT_MS || 180000));
+const SHADE_LINK_EXPIRY_DAYS = Math.max(0, Number(process.env.SHADE_LINK_EXPIRY_DAYS || 30));
+const SHADE_API_BASE = 'https://api.shade.inc';
+
+const shadeLinkJobs = new Set();
+let shadeDriveCache = { at: 0, drives: [] };
 
 const sessions = new Map();
 let persistTimer = null;
@@ -502,6 +513,187 @@ function attachShadeLink(media, link) {
   media.shadeShareLinkedAt = nowIso();
   media.shadeVerified = true;
   return true;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function shadeApiRequest(endpoint, options = {}) {
+  if (!SHADE_API_KEY) throw new Error('SHADE_API_KEY is not configured.');
+
+  const response = await fetch(`${SHADE_API_BASE}${endpoint}`, {
+    ...options,
+    headers: {
+      authorization: SHADE_API_KEY,
+      ...(options.body ? { 'content-type': 'application/json' } : {}),
+      ...(options.headers || {})
+    }
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    const detail = body ? `: ${body.slice(0, 240)}` : '';
+    const error = new Error(`Shade API ${response.status} ${response.statusText}${detail}`);
+    error.status = response.status;
+    throw error;
+  }
+
+  return response.json();
+}
+
+async function listShadeDrives() {
+  const now = Date.now();
+  if (shadeDriveCache.drives.length && now - shadeDriveCache.at < 5 * 60 * 1000) {
+    return shadeDriveCache.drives;
+  }
+
+  const workspaces = SHADE_WORKSPACE_ID
+    ? [{ id: SHADE_WORKSPACE_ID, name: SHADE_WORKSPACE_ID }]
+    : await shadeApiRequest('/workspaces');
+
+  const drives = [];
+  for (const workspace of workspaces) {
+    const workspaceDrives = await shadeApiRequest(`/workspaces/${encodeURIComponent(workspace.id)}/drives`);
+    for (const drive of workspaceDrives) {
+      drives.push({ ...drive, workspaceName: workspace.name || workspace.id });
+    }
+  }
+
+  shadeDriveCache = { at: now, drives };
+  return drives;
+}
+
+function localShadePathParts(localPath) {
+  const normalized = String(localPath || '').trim();
+  if (!normalized) throw new Error('Clip has no Shade path.');
+
+  if (SHADE_DRIVE_ID && SHADE_MOUNT_ROOT) {
+    const root = SHADE_MOUNT_ROOT.replace(/\/$/, '');
+    if (!normalized.startsWith(`${root}/`) && normalized !== root) {
+      throw new Error(`Shade path is outside SHADE_MOUNT_ROOT: ${normalized}`);
+    }
+    const relative = normalized.slice(root.length).replace(/^\/+/, '');
+    return { driveId: SHADE_DRIVE_ID, driveName: '', mountRoot: root, relative };
+  }
+
+  const match = normalized.match(/^\/Volumes\/([^/]+)(?:\/(.*))?$/);
+  if (!match) {
+    throw new Error(`Unable to determine Shade drive from path: ${normalized}`);
+  }
+
+  return {
+    driveId: '',
+    driveName: match[1],
+    mountRoot: `/Volumes/${match[1]}`,
+    relative: match[2] || ''
+  };
+}
+
+async function resolveShadeAssetPath(localPath) {
+  const parts = localShadePathParts(localPath);
+  let driveId = parts.driveId;
+
+  if (!driveId) {
+    const drives = await listShadeDrives();
+    const matches = drives.filter((drive) => String(drive.name || '') === parts.driveName);
+    if (matches.length !== 1) {
+      if (!matches.length) throw new Error(`No Shade drive named "${parts.driveName}" is visible to this API key.`);
+      throw new Error(`Multiple Shade drives are named "${parts.driveName}". Set SHADE_DRIVE_ID in Railway.`);
+    }
+    driveId = String(matches[0].id || '');
+  }
+
+  if (!driveId) throw new Error('Shade drive ID could not be resolved.');
+
+  const relative = parts.relative.split('/').map(encodeURIComponent).join('/');
+  const shadePath = `/${driveId}/${relative}`.replace(/\/$/, '');
+  return { driveId, shadePath };
+}
+
+async function waitForShadeAsset(driveId, shadePath) {
+  const deadline = Date.now() + SHADE_LINK_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    const url = new URL(`${SHADE_API_BASE}/assets/path`);
+    url.searchParams.set('drive_id', driveId);
+    url.searchParams.set('path', shadePath);
+
+    const response = await fetch(url, {
+      headers: { authorization: SHADE_API_KEY }
+    });
+
+    if (response.status === 404) {
+      await sleep(SHADE_LINK_POLL_INTERVAL_MS);
+      continue;
+    }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`Shade asset lookup failed (${response.status})${body ? `: ${body.slice(0, 240)}` : ''}`);
+    }
+
+    return response.json();
+  }
+
+  throw new Error(`Shade did not register ${shadePath} before the link timeout.`);
+}
+
+async function createShadeViewLink(driveId, shadePath, fileName) {
+  const body = {
+    path: shadePath,
+    name: `Replay - ${fileName}`,
+    is_public_enabled: true,
+    allowed_actions: ['read']
+  };
+
+  if (SHADE_LINK_EXPIRY_DAYS > 0) {
+    body.expiration_date = new Date(Date.now() + SHADE_LINK_EXPIRY_DAYS * 86400000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  }
+
+  const share = await shadeApiRequest(
+    `/workspaces/drives/${encodeURIComponent(driveId)}/public-file-shares`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
+
+  if (!share?.id) throw new Error('Shade share response did not include an id.');
+  return `https://app.shade.inc/publish/${share.id}`;
+}
+
+async function createShadeLinkForMedia(media) {
+  if (!SHADE_API_KEY || !media || media.kind !== 'clip' || media.shadeShareUrl || !media.shadePath) return false;
+  if (shadeLinkJobs.has(media.id)) return false;
+
+  shadeLinkJobs.add(media.id);
+  try {
+    const { driveId, shadePath } = await resolveShadeAssetPath(media.shadePath);
+    await waitForShadeAsset(driveId, shadePath);
+    const shareUrl = await createShadeViewLink(driveId, shadePath, media.fileName);
+
+    attachShadeLink(media, { shareUrl });
+    media.shadeApiPath = shadePath;
+    media.shadeLinkError = '';
+    schedulePersist();
+    console.log(`[Shade Link] created: ${media.fileName} -> ${shareUrl}`);
+    await sendClipSlack(media);
+    return true;
+  } catch (err) {
+    media.shadeLinkError = String(err.message || err).slice(0, 500);
+    media.shadeLinkDeadlineAt = nowIso();
+    schedulePersist();
+    console.error(`[Shade Link] create failed for ${media.fileName}: ${media.shadeLinkError}`);
+    await sendClipSlack(media);
+    return false;
+  } finally {
+    shadeLinkJobs.delete(media.id);
+  }
+}
+
+function ensureShadeLinkForMedia(media) {
+  if (!SHADE_API_KEY || !media || media.kind !== 'clip' || media.shadeShareUrl || !media.shadePath || media.slackSentAt) return;
+  createShadeLinkForMedia(media).catch((err) => {
+    console.error('[Shade Link] background job failed:', err.message);
+  });
 }
 
 function slugify(value) {
@@ -1005,7 +1197,8 @@ async function sendClipSlack(media) {
     `Room: ${media.roomName}`,
     clipPlayerSummary(media),
     `Clip Time: ${clipTimeLabel(media.createdAt)}`,
-    'Shade: Saved ✓'
+    'Shade: Saved ✓',
+    media.shadeShareUrl ? `Link: ${media.shadeShareUrl}` : 'Link: Unavailable'
   ];
 
   try {
@@ -1223,7 +1416,9 @@ async function ingestAgentMedia(req, res) {
     trigger: String(body.trigger || '').slice(0, 80),
     shadeShareUrl: '',
     shadeShareLinkedAt: null,
-    shadeLinkDeadlineAt: kind === 'clip' ? new Date(Date.now() + SHADE_LINK_GRACE_MS).toISOString() : null,
+    shadeLinkDeadlineAt: kind === 'clip'
+      ? new Date(Date.now() + (SHADE_API_KEY ? SHADE_LINK_TIMEOUT_MS : SHADE_LINK_GRACE_MS)).toISOString()
+      : null,
     slackSentAt: null,
     playerRecognition: kind === 'clip' && body.playerRecognition && typeof body.playerRecognition === 'object'
       ? {
@@ -1276,6 +1471,7 @@ async function ingestAgentMedia(req, res) {
     );
   }
 
+  if (kind === 'clip') ensureShadeLinkForMedia(media);
   await sendClipSlack(media);
   return sendJson(res, 201, { ok: true, media });
 }
@@ -1636,6 +1832,7 @@ setInterval(() => {
   for (const [token, session] of sessions) if (session.expiresAt <= now) sessions.delete(token);
 
   for (const media of state.media) {
+    ensureShadeLinkForMedia(media);
     if (!clipReadyForSlack(media, now)) continue;
     sendClipSlack(media).catch((err) => {
       console.error('Deferred Slack clip alert failed:', err.message);
