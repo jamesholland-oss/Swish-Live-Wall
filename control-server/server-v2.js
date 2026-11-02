@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { createGoogleWorkspaceAuth } = require('./google-auth');
 
 const PORT = Number(process.env.PORT || 8787);
-const SERVER_VERSION = '2.0.0-beta.36';
+const SERVER_VERSION = '2.0.0-beta.37';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
@@ -1930,4 +1930,16 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`Swish Control server listening on ${PORT}`);
   console.log(`Data directory: ${DATA_DIR}`);
   console.log(`Control users: ${users.length}`);
+  console.log(`[Shade Diagnostic] API key configured: ${SHADE_API_KEY ? 'YES' : 'NO'}`);
+
+  if (SHADE_API_KEY) {
+    listShadeDrives()
+      .then((drives) => {
+        const names = drives.map((drive) => String(drive.name || '')).filter(Boolean);
+        console.log(`[Shade Diagnostic] API connection OK. Visible drives: ${drives.length}${names.length ? ` | ${names.join(', ')}` : ''}`);
+      })
+      .catch((err) => {
+        console.error(`[Shade Diagnostic] API connection FAILED: ${err.message}`);
+      });
+  }
 });
