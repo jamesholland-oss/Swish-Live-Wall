@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { createGoogleWorkspaceAuth } = require('./google-auth');
 
 const PORT = Number(process.env.PORT || 8787);
-const SERVER_VERSION = '2.0.0-beta.38';
+const SERVER_VERSION = '2.0.0-beta.39';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
@@ -1215,7 +1215,7 @@ async function sendClipSlack(media) {
     clipPlayerSummary(media),
     `Clip Time: ${clipTimeLabel(media.createdAt)}`,
     'Shade: Saved ✓',
-    media.shadeShareUrl ? `Link: ${media.shadeShareUrl}` : 'Link: Unavailable',
+    media.shadeShareUrl ? `Link: <${media.shadeShareUrl}|Open Clip>` : 'Link: Unavailable',
     !media.shadeShareUrl && media.shadeLinkError ? `Shade Link Error: ${media.shadeLinkError}` : ''
   ].filter(Boolean);
 
