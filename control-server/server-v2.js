@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { createGoogleWorkspaceAuth } = require('./google-auth');
 
 const PORT = Number(process.env.PORT || 8787);
-const SERVER_VERSION = '2.0.0-beta.35';
+const SERVER_VERSION = '2.0.0-beta.36';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
@@ -1491,6 +1491,76 @@ async function ingestAgentMedia(req, res) {
   return sendJson(res, 201, { ok: true, media });
 }
 
+
+async function shadeDiagnostic(req, res) {
+  const user = requirePermission(req, res, 'settings:manage');
+  if (!user) return;
+
+  const result = {
+    serverVersion: SERVER_VERSION,
+    apiKeyConfigured: Boolean(SHADE_API_KEY),
+    workspaceIdConfigured: Boolean(SHADE_WORKSPACE_ID),
+    driveIdConfigured: Boolean(SHADE_DRIVE_ID),
+    mountRootConfigured: Boolean(SHADE_MOUNT_ROOT),
+    driveCount: null,
+    drives: [],
+    latestClip: null,
+    test: 'not-run',
+    error: ''
+  };
+
+  if (!SHADE_API_KEY) {
+    result.error = 'SHADE_API_KEY is not visible to this Railway service.';
+    return sendJson(res, 200, result);
+  }
+
+  try {
+    const drives = await listShadeDrives();
+    result.driveCount = drives.length;
+    result.drives = drives.slice(0, 25).map((drive) => ({
+      id: String(drive.id || ''),
+      name: String(drive.name || ''),
+      workspace: String(drive.workspaceName || '')
+    }));
+
+    const media = state.media.find((item) => item?.kind === 'clip' && item?.shadePath);
+    if (!media) {
+      result.test = 'api-ok-no-clip';
+      result.error = 'Shade API is reachable, but no clip with a Shade path is stored yet.';
+      return sendJson(res, 200, result);
+    }
+
+    result.latestClip = {
+      id: media.id,
+      roomName: media.roomName,
+      fileName: media.fileName,
+      shadePath: media.shadePath,
+      shadeShareUrl: media.shadeShareUrl || '',
+      shadeLinkError: media.shadeLinkError || ''
+    };
+
+    const { driveId, shadePath } = await resolveShadeAssetPath(media.shadePath);
+    result.latestClip.resolvedDriveId = driveId;
+    result.latestClip.resolvedShadePath = shadePath;
+
+    const url = new URL(`${SHADE_API_BASE}/assets/path`);
+    url.searchParams.set('drive_id', driveId);
+    url.searchParams.set('path', shadePath);
+    const response = await fetch(url, { headers: { authorization: SHADE_API_KEY } });
+
+    result.test = response.ok ? 'asset-found' : `asset-lookup-http-${response.status}`;
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      result.error = body.slice(0, 500);
+    }
+    return sendJson(res, 200, result);
+  } catch (err) {
+    result.test = 'failed';
+    result.error = String(err.message || err).slice(0, 1000);
+    return sendJson(res, 200, result);
+  }
+}
+
 async function ingestShadeShareLink(req, res) {
   if (!SHADE_WEBHOOK_KEY) return sendJson(res, 503, { error: 'Shade webhook is not configured.' });
   if (!shadeWebhookAuthorized(req)) return sendJson(res, 401, { error: 'Invalid Shade webhook key.' });
@@ -1748,6 +1818,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/agent/heartbeat') return heartbeat(req, res);
     if (req.method === 'POST' && url.pathname === '/api/agent/media') return ingestAgentMedia(req, res);
     if (req.method === 'POST' && url.pathname === '/api/shade/share-link') return ingestShadeShareLink(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/shade/diagnostic') return shadeDiagnostic(req, res);
     if (req.method === 'GET' && url.pathname === '/api/wall-status') return sendJson(res, 200, { rooms: wallRooms() });
 
     if (req.method === 'POST' && url.pathname.startsWith('/api/rooms/') && url.pathname.endsWith('/settings')) {
