@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { createGoogleWorkspaceAuth } = require('./google-auth');
 
 const PORT = Number(process.env.PORT || 8787);
-const SERVER_VERSION = '2.0.0-beta.34';
+const SERVER_VERSION = '2.0.0-beta.35';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const ENROLLMENT_KEY = String(process.env.AGENT_ENROLLMENT_KEY || '');
@@ -596,10 +596,24 @@ async function resolveShadeAssetPath(localPath) {
 
   if (!driveId) {
     const drives = await listShadeDrives();
-    const matches = drives.filter((drive) => String(drive.name || '') === parts.driveName);
+    const targetName = String(parts.driveName || '').trim().toLowerCase();
+    let matches = drives.filter((drive) => String(drive.name || '').trim().toLowerCase() === targetName);
+
+    // Mounted Shade volume names can differ slightly from the API drive name.
+    // Only use a fuzzy match when it resolves to exactly one drive.
+    if (!matches.length) {
+      matches = drives.filter((drive) => {
+        const name = String(drive.name || '').trim().toLowerCase();
+        return name && targetName && (name.includes(targetName) || targetName.includes(name));
+      });
+    }
+
     if (matches.length !== 1) {
-      if (!matches.length) throw new Error(`No Shade drive named "${parts.driveName}" is visible to this API key.`);
-      throw new Error(`Multiple Shade drives are named "${parts.driveName}". Set SHADE_DRIVE_ID in Railway.`);
+      const visible = drives.map((drive) => String(drive.name || '')).filter(Boolean).slice(0, 20).join(', ');
+      if (!matches.length) {
+        throw new Error(`No Shade drive matched mounted volume "${parts.driveName}". Visible drives: ${visible || 'none'}`);
+      }
+      throw new Error(`Multiple Shade drives matched "${parts.driveName}". Set SHADE_DRIVE_ID in Railway.`);
     }
     driveId = String(matches[0].id || '');
   }
@@ -1198,8 +1212,9 @@ async function sendClipSlack(media) {
     clipPlayerSummary(media),
     `Clip Time: ${clipTimeLabel(media.createdAt)}`,
     'Shade: Saved ✓',
-    media.shadeShareUrl ? `Link: ${media.shadeShareUrl}` : 'Link: Unavailable'
-  ];
+    media.shadeShareUrl ? `Link: ${media.shadeShareUrl}` : 'Link: Unavailable',
+    !media.shadeShareUrl && media.shadeLinkError ? `Shade Link Error: ${media.shadeLinkError}` : ''
+  ].filter(Boolean);
 
   try {
     const response = await fetch(SLACK_CLIP_WEBHOOK_URL, {
