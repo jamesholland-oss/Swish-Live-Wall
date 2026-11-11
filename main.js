@@ -16,11 +16,12 @@ app.commandLine.appendSwitch('disable-domain-reliability');
 app.commandLine.appendSwitch('disable-features', 'MediaRouter,Translate');
 
 const SWISH_POKE_URL = 'https://www.tiktok.com/@swishpoke/live?enter_from_merge=others_homepage&enter_method=others_photo';
+const SWISH_GRAILS_URL = 'https://www.tiktok.com/@swishgrails/live?enter_from_merge=others_homepage&enter_method=others_photo';
 const SWISH_HITS_URL = 'https://www.whatnot.com/live/84f6aeba-efa9-4a2f-8c39-793c45d19ac6?referringSource=profile';
 
 const DEFAULT_STREAMS = [
   { id: 'stream-1', name: 'Swish Breaks FN', url: 'https://www.fanatics.live/shows/2fbba9a5-da47-443e-9944-e7f578aae30b', platform: 'Fanatics', roomId: '' },
-  { id: 'stream-2', name: 'Swish Wax FN', url: 'https://www.fanatics.live/shows/86bfa9ee-a115-4804-b272-e342f8491626', platform: 'Fanatics', roomId: '' },
+  { id: 'stream-2', name: 'Swish Grails', url: SWISH_GRAILS_URL, platform: 'TikTok', roomId: '' },
   { id: 'stream-3', name: 'Swish Bats', url: 'https://www.fanatics.live/shows/debdca0f-bc98-4810-a2d1-e1e421787c26', platform: 'Fanatics', roomId: '' },
   { id: 'stream-4', name: 'Swish Breaks WN', url: 'https://www.whatnot.com/live/ca5f2818-97f2-4814-88f8-b05d1a6226ef?referringSource=profile', platform: 'Whatnot', roomId: '' },
   { id: 'stream-5', name: 'Swish Smash WN', url: 'https://www.whatnot.com/live/620075d2-709d-4eba-a931-2b1208b9567f?referringSource=profile', platform: 'Whatnot', roomId: '' },
@@ -107,6 +108,25 @@ function loadStreams() {
   if (Array.isArray(saved) && saved.length >= 1 && saved.length <= 150) {
     let normalized = saved.map(normalizeStream);
     let changed = false;
+
+    // Slot 2 was formerly Swish Wax FN. It is now the Swish Grails TikTok channel.
+    const streamTwo = normalized.find((stream) => stream.id === 'stream-2') || normalized[1];
+    if (streamTwo) {
+      const desiredRoomId = streamTwo.roomId || '';
+      if (
+        streamTwo.id !== 'stream-2' ||
+        streamTwo.name !== 'Swish Grails' ||
+        streamTwo.url !== SWISH_GRAILS_URL ||
+        streamTwo.platform !== 'TikTok'
+      ) {
+        streamTwo.id = 'stream-2';
+        streamTwo.name = 'Swish Grails';
+        streamTwo.url = SWISH_GRAILS_URL;
+        streamTwo.platform = 'TikTok';
+        streamTwo.roomId = desiredRoomId;
+        changed = true;
+      }
+    }
 
     const streamNine = normalized.find((stream) => stream.id === 'stream-9');
     if (streamNine) {
