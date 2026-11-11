@@ -21,15 +21,15 @@ const SWISH_HITS_URL = 'https://www.whatnot.com/live/84f6aeba-efa9-4a2f-8c39-793
 
 const DEFAULT_STREAMS = [
   { id: 'stream-1', name: 'Swish Breaks FN', url: 'https://www.fanatics.live/shows/2fbba9a5-da47-443e-9944-e7f578aae30b', platform: 'Fanatics', roomId: '' },
-  { id: 'stream-2', name: 'Swish Grails', url: SWISH_GRAILS_URL, platform: 'TikTok', roomId: '' },
+  { id: 'stream-2', name: 'Swish Hits WN', url: SWISH_HITS_URL, platform: 'Whatnot', roomId: '' },
   { id: 'stream-3', name: 'Swish Bats', url: 'https://www.fanatics.live/shows/debdca0f-bc98-4810-a2d1-e1e421787c26', platform: 'Fanatics', roomId: '' },
   { id: 'stream-4', name: 'Swish Breaks WN', url: 'https://www.whatnot.com/live/ca5f2818-97f2-4814-88f8-b05d1a6226ef?referringSource=profile', platform: 'Whatnot', roomId: '' },
   { id: 'stream-5', name: 'Swish Smash WN', url: 'https://www.whatnot.com/live/620075d2-709d-4eba-a931-2b1208b9567f?referringSource=profile', platform: 'Whatnot', roomId: '' },
-  { id: 'stream-6', name: 'Poke Swish', url: 'https://www.whatnot.com/live/031440c2-d8f3-48e2-b3f6-0d9ab1b55352?referringSource=autocomplete', platform: 'Whatnot', roomId: '' },
+  { id: 'stream-6', name: 'Swish Grails', url: SWISH_GRAILS_URL, platform: 'TikTok', roomId: '' },
   { id: 'stream-7', name: 'Swish Breaks TT', url: 'https://www.tiktok.com/@swishbreaks/live?enter_from_merge=others_homepage&enter_method=others_photo', platform: 'TikTok', roomId: '' },
   { id: 'stream-8', name: 'Swish Rips', url: 'https://www.tiktok.com/@swish.rips/live?enter_from_merge=others_homepage&enter_method=others_photo', platform: 'TikTok', roomId: '' },
   { id: 'stream-9', name: 'Swish Poke', url: SWISH_POKE_URL, platform: 'TikTok', roomId: '' },
-  { id: 'stream-10', name: 'Swish Hits WN', url: SWISH_HITS_URL, platform: 'Whatnot', roomId: '' }
+  { id: 'stream-10', name: 'Poke Swish', url: 'https://www.whatnot.com/live/031440c2-d8f3-48e2-b3f6-0d9ab1b55352?referringSource=autocomplete', platform: 'Whatnot', roomId: '' }
 ];
 
 const DEFAULT_APP_CONFIG = {
@@ -109,21 +109,35 @@ function loadStreams() {
     let normalized = saved.map(normalizeStream);
     let changed = false;
 
-    // Slot 2 was formerly Swish Wax FN. It is now the Swish Grails TikTok channel.
+    // Display-wall slot order: Hits in slot 2, Grails in slot 6, Poke WN in slot 10.
     const streamTwo = normalized.find((stream) => stream.id === 'stream-2') || normalized[1];
     if (streamTwo) {
-      const desiredRoomId = streamTwo.roomId || '';
       if (
         streamTwo.id !== 'stream-2' ||
-        streamTwo.name !== 'Swish Grails' ||
-        streamTwo.url !== SWISH_GRAILS_URL ||
-        streamTwo.platform !== 'TikTok'
+        streamTwo.name !== 'Swish Hits WN' ||
+        streamTwo.url !== SWISH_HITS_URL ||
+        streamTwo.platform !== 'Whatnot'
       ) {
         streamTwo.id = 'stream-2';
-        streamTwo.name = 'Swish Grails';
-        streamTwo.url = SWISH_GRAILS_URL;
-        streamTwo.platform = 'TikTok';
-        streamTwo.roomId = desiredRoomId;
+        streamTwo.name = 'Swish Hits WN';
+        streamTwo.url = SWISH_HITS_URL;
+        streamTwo.platform = 'Whatnot';
+        changed = true;
+      }
+    }
+
+    const streamSix = normalized.find((stream) => stream.id === 'stream-6') || normalized[5];
+    if (streamSix) {
+      if (
+        streamSix.id !== 'stream-6' ||
+        streamSix.name !== 'Swish Grails' ||
+        streamSix.url !== SWISH_GRAILS_URL ||
+        streamSix.platform !== 'TikTok'
+      ) {
+        streamSix.id = 'stream-6';
+        streamSix.name = 'Swish Grails';
+        streamSix.url = SWISH_GRAILS_URL;
+        streamSix.platform = 'TikTok';
         changed = true;
       }
     }
@@ -139,17 +153,14 @@ function loadStreams() {
       }
     }
 
-    // Swish Hits is the canonical 10th wall slot. Earlier beta builds only
-    // replaced Stream 10 when it was blank, which could append Swish Hits as
-    // an 11th row on upgraded installs. Normalize that here and preserve any
-    // room link the appended Swish Hits row may already have.
+    // Poke Swish (Whatnot) is the canonical 10th wall slot.
     let streamTen = normalized.find((stream) => stream.id === 'stream-10') || normalized[9];
 
     if (!streamTen && normalized.length < 150) {
       streamTen = normalizeStream({
         id: 'stream-10',
-        name: 'Swish Hits WN',
-        url: SWISH_HITS_URL,
+        name: 'Poke Swish',
+        url: 'https://www.whatnot.com/live/031440c2-d8f3-48e2-b3f6-0d9ab1b55352?referringSource=autocomplete',
         platform: 'Whatnot',
         roomId: ''
       }, 9);
@@ -157,36 +168,21 @@ function loadStreams() {
       changed = true;
     }
 
-    const duplicateHits = normalized.filter((stream) =>
-      stream !== streamTen &&
-      (stream.url === SWISH_HITS_URL || /swish hits/i.test(stream.name))
-    );
-
     if (streamTen) {
-      const linkedDuplicate = duplicateHits.find((stream) => stream.roomId);
-      const desiredRoomId = streamTen.roomId || linkedDuplicate?.roomId || '';
-
       if (
         streamTen.id !== 'stream-10' ||
-        streamTen.name !== 'Swish Hits WN' ||
-        streamTen.url !== SWISH_HITS_URL ||
-        streamTen.platform !== 'Whatnot' ||
-        streamTen.roomId !== desiredRoomId
+        streamTen.name !== 'Poke Swish' ||
+        streamTen.url !== 'https://www.whatnot.com/live/031440c2-d8f3-48e2-b3f6-0d9ab1b55352?referringSource=autocomplete' ||
+        streamTen.platform !== 'Whatnot'
       ) {
         streamTen.id = 'stream-10';
-        streamTen.name = 'Swish Hits WN';
-        streamTen.url = SWISH_HITS_URL;
+        streamTen.name = 'Poke Swish';
+        streamTen.url = 'https://www.whatnot.com/live/031440c2-d8f3-48e2-b3f6-0d9ab1b55352?referringSource=autocomplete';
         streamTen.platform = 'Whatnot';
-        streamTen.roomId = desiredRoomId;
         changed = true;
       }
     }
 
-    if (duplicateHits.length) {
-      const duplicateIds = new Set(duplicateHits.map((stream) => stream.id));
-      normalized = normalized.filter((stream) => !duplicateIds.has(stream.id));
-      changed = true;
-    }
 
     if (changed) writeJson(streamsFile, normalized);
     return normalized;
