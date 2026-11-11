@@ -473,14 +473,44 @@ function createWallTile(stream) {
   return tile;
 }
 
+function displayGridForCount(count) {
+  if (count <= 1) return { columns: 1, rows: 1 };
+  if (count <= 2) return { columns: 2, rows: 1 };
+  if (count <= 4) return { columns: 2, rows: 2 };
+  if (count <= 6) return { columns: 3, rows: 2 };
+  if (count <= 8) return { columns: 4, rows: 2 };
+  if (count <= 10) return { columns: 5, rows: 2 };
+  if (count <= 12) return { columns: 4, rows: 3 };
+  if (count <= 15) return { columns: 5, rows: 3 };
+  if (count <= 16) return { columns: 4, rows: 4 };
+  return { columns: 5, rows: Math.ceil(count / 5) };
+}
+
+function applyDisplayOnlyGrid(count) {
+  if (appConfig.role !== 'wall') {
+    els.wallGrid.style.removeProperty('--wall-columns');
+    els.wallGrid.style.removeProperty('--wall-rows');
+    return;
+  }
+
+  const layout = displayGridForCount(Math.max(1, count));
+  els.wallGrid.style.setProperty('--wall-columns', String(layout.columns));
+  els.wallGrid.style.setProperty('--wall-rows', String(layout.rows));
+}
+
 function renderWall() {
   if (currentPage !== 'wall') return;
   els.wallGrid.innerHTML = '';
-  const visibleStreams = streams.filter(streamMatchesFilter);
+
+  const visibleStreams = appConfig.role === 'wall'
+    ? streams
+    : streams.filter(streamMatchesFilter);
+
+  applyDisplayOnlyGrid(visibleStreams.length);
   visibleStreams.forEach((stream) => els.wallGrid.append(createWallTile(stream)));
 
   if (!visibleStreams.length) {
-    els.wallGrid.innerHTML = '<div class="empty-state">No streams match this filter.</div>';
+    els.wallGrid.innerHTML = '<div class="empty-state">No streams configured.</div>';
   }
 }
 
