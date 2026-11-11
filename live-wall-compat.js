@@ -130,23 +130,13 @@ function streamTelemetryState(stream) {
   if (!stream?.roomId) return 'unknown';
   const status = statusForRoom(stream.roomId);
 
+  // All linked rooms follow the same rule:
+  // verified OBS WebSocket live=true -> show provider;
+  // verified live=false -> off-air;
+  // anything else -> checking status.
   if (status?.agentOnline === false) return 'unknown';
   if (status?.streamingActive === true) return 'live';
   if (status?.streamingActive === false) return 'off';
-
-  // Swish Poke TikTok intentionally fails open for provider visibility when
-  // the room agent is online but OBS WebSocket live-state verification is not
-  // available. The explicit "off" state above still wins when OBS is closed.
-  const streamName = String(stream?.name || '').trim().toLowerCase();
-  const isSwishPokeTikTok =
-    platformFor(stream) === 'TikTok' &&
-    streamName.includes('swish') &&
-    streamName.includes('poke');
-
-  if (isSwishPokeTikTok && status?.agentOnline !== false) return 'live';
-
-  if (status?.allowUnverifiedProviderDisplay === true) return 'live';
-
   return 'unknown';
 }
 
@@ -545,7 +535,7 @@ function applyWallFilterWithoutReload() {
   let visibleCount = 0;
 
   els.wallGrid.querySelectorAll('.stream-tile').forEach((tile) => {
-    const visible = tileMatchesActiveFilter(tile);
+    const visible = appConfig.role === 'wall' ? true : tileMatchesActiveFilter(tile);
     tile.classList.toggle('filter-hidden', !visible);
     if (visible) visibleCount += 1;
   });
@@ -589,6 +579,10 @@ function syncWallRoomBindings() {
 renderWall = function renderWallCompat() {
   const signature = wallConfigSignature();
   const alreadyBuilt = els.wallGrid.querySelectorAll('.stream-tile').length > 0;
+
+  if (appConfig.role === 'wall' && typeof applyDisplayOnlyGrid === 'function') {
+    applyDisplayOnlyGrid(streams.length);
+  }
 
   if (!alreadyBuilt || signature !== liveWallCompatState.configSignature) {
     restorePortaledWallStream();
