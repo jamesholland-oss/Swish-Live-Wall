@@ -357,3 +357,28 @@ th { position: sticky; top: 0; z-index: 1; background: var(--panel); color: var(
     inset: 22px 0 0;
   }
 }
+
+
+/* Display Only: normalize every provider to the same vertical monitor tile */
+.wall-mode .stream-tile[data-platform="Whatnot"] .phone-frame,
+.wall-mode .stream-tile[data-platform="Fanatics"] .phone-frame,
+.wall-mode .stream-tile[data-platform="TikTok"] .phone-frame,
+.wall-mode .phone-frame {
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 9 / 16;
+}
+
+.wall-mode .stream-tile[data-platform="TikTok"] .phone-stage {
+  gap: 0;
+  padding-inline: 2px;
+}
+
+.wall-mode .tiktok-auction-rail {
+  display: none !important;
+}
+
+.wall-mode .filter-hidden {
+  display: block !important;
+}
