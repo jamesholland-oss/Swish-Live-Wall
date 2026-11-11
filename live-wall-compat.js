@@ -130,13 +130,19 @@ function streamTelemetryState(stream) {
   if (!stream?.roomId) return 'unknown';
   const status = statusForRoom(stream.roomId);
 
-  // All linked rooms follow the same rule:
-  // verified OBS WebSocket live=true -> show provider;
-  // verified live=false -> off-air;
-  // anything else -> checking status.
   if (status?.agentOnline === false) return 'unknown';
   if (status?.streamingActive === true) return 'live';
   if (status?.streamingActive === false) return 'off';
+
+  const streamName = String(stream?.name || '').trim().toLowerCase();
+  const isSwishPokeTikTok =
+    platformFor(stream) === 'TikTok' &&
+    streamName.includes('swish') &&
+    streamName.includes('poke');
+
+  if (isSwishPokeTikTok && status?.agentOnline !== false) return 'live';
+  if (status?.allowUnverifiedProviderDisplay === true) return 'live';
+
   return 'unknown';
 }
 
@@ -296,6 +302,25 @@ function updateStreamLivePresentation(tile, stream) {
   const linkedRoom = Boolean(stream.roomId);
   tile.dataset.liveState = next;
 
+  // Office Display Only is presentation-first: always show the provider page.
+  // Never cover tiles with CHECKING LIVE STATUS / off-air messaging.
+  if (appConfig.role === 'wall') {
+    tile.querySelector('.stream-off-air')?.remove();
+
+    // If Fanatics was previously parked on the shop page by live-status logic,
+    // return it to the stream's configured URL for the public multiview.
+    if (platformFor(stream) === 'Fanatics') {
+      const configuredUrl = safeUrl(stream.url);
+      const current = currentViewUrl(view);
+      if (configuredUrl && (!current || current.startsWith(FANATICS_SHOP_URL))) {
+        try { view?.loadURL(configuredUrl); } catch (_) {}
+      }
+    }
+
+    resumeView(view);
+    return;
+  }
+
   // Every linked room is agent-gated. If the room is not streaming, the Wall
   // and Room View show a clean off-air state instead of stale provider content.
   if (linkedRoom && next === 'unknown') {
@@ -357,7 +382,10 @@ function createLegacyStreamWebview(stream) {
   if (!url) return null;
 
   const view = document.createElement('webview');
-  const initialUrl = platformFor(stream) === 'Fanatics' && stream.roomId ? FANATICS_SHOP_URL : url;
+  const initialUrl =
+    appConfig.role === 'wall'
+      ? url
+      : (platformFor(stream) === 'Fanatics' && stream.roomId ? FANATICS_SHOP_URL : url);
   view.src = initialUrl;
   view.setAttribute('partition', 'persist:swish-live-wall');
 
