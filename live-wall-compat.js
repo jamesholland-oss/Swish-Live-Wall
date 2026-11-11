@@ -204,6 +204,13 @@ function scheduleFanaticsResolution(view, stream, tile, delayMs = 500) {
 }
 
 async function resolveFanaticsCurrentShow(view, stream, tile) {
+  // Display Only should always show the configured provider page directly.
+  if (appConfig.role === 'wall') {
+    tile?.querySelector('.stream-off-air')?.remove();
+    resumeView(view);
+    return;
+  }
+
   if (!view?.isConnected || platformFor(stream) !== 'Fanatics' || !stream.roomId) return;
 
   const liveState = streamTelemetryState(stream);
@@ -411,7 +418,7 @@ function createLegacyStreamWebview(stream) {
       view.setUserAgent(ua);
       applyProviderPresentation();
       applyStreamAudioState(view, streamMuted(stream.id));
-      if (platformFor(stream) === 'Fanatics' && stream.roomId) {
+      if (appConfig.role !== 'wall' && platformFor(stream) === 'Fanatics' && stream.roomId) {
         const tile = view.closest('.stream-tile');
         scheduleFanaticsResolution(view, stream, tile, 800);
       }
@@ -422,7 +429,7 @@ function createLegacyStreamWebview(stream) {
     applyProviderPresentation();
     applyStreamAudioState(view, streamMuted(stream.id));
 
-    if (platformFor(stream) === 'Fanatics' && stream.roomId) {
+    if (appConfig.role !== 'wall' && platformFor(stream) === 'Fanatics' && stream.roomId) {
       const tile = view.closest('.stream-tile');
       const resolvedUrl = String(view.dataset.swishFanaticsResolvedUrl || '');
       const current = currentViewUrl(view);
@@ -439,6 +446,7 @@ function createLegacyStreamWebview(stream) {
   });
 
   view.addEventListener('did-navigate', (event) => {
+    if (appConfig.role === 'wall') return;
     if (platformFor(stream) !== 'Fanatics' || !stream.roomId) return;
     const resolvedUrl = String(view.dataset.swishFanaticsResolvedUrl || '');
     const nextUrl = String(event.url || '');
