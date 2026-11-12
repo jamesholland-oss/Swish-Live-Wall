@@ -181,6 +181,21 @@ function currentViewUrl(view) {
   catch (_) { return ''; }
 }
 
+function fanaticsUrlWithBypass(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!value) return '';
+
+  try {
+    const url = new URL(value);
+    if (url.hostname === 'fanatics.live' || url.hostname.endsWith('.fanatics.live')) {
+      url.searchParams.set('bypassstillwatching', 'true');
+      return url.toString();
+    }
+  } catch (_) {}
+
+  return value;
+}
+
 function loadFanaticsShop(view) {
   if (!view?.isConnected) return;
   const current = currentViewUrl(view);
@@ -280,7 +295,7 @@ async function resolveFanaticsCurrentShow(view, stream, tile) {
       })();
     `);
 
-    const showUrl = String(match || '').trim();
+    const showUrl = fanaticsUrlWithBypass(match);
     if (!showUrl) {
       ensureOffAirOverlay(
         tile,
@@ -616,8 +631,11 @@ renderWall = function renderWallCompat() {
   const signature = wallConfigSignature();
   const alreadyBuilt = els.wallGrid.querySelectorAll('.stream-tile').length > 0;
 
-  if (appConfig.role === 'wall' && typeof applyDisplayOnlyGrid === 'function') {
-    applyDisplayOnlyGrid(streams.length);
+  if (['wall', 'control'].includes(appConfig.role) && typeof applyDisplayOnlyGrid === 'function') {
+    const visibleCount = appConfig.role === 'wall'
+      ? streams.length
+      : streams.filter((stream) => tileMatchesActiveFilter({ dataset: { streamId: stream.id } })).length;
+    applyDisplayOnlyGrid(visibleCount || streams.length);
   }
 
   if (!alreadyBuilt || signature !== liveWallCompatState.configSignature) {
