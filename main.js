@@ -744,7 +744,14 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, commandLine) => {
+    if (Array.isArray(commandLine) && commandLine.includes('--reset-role')) {
+      const cleanArgs = process.argv.slice(1).filter((arg) => arg !== '--reset-role');
+      app.relaunch({ args: [...cleanArgs, '--reset-role'] });
+      app.exit(0);
+      return;
+    }
+
     createWindow();
   });
 
