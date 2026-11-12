@@ -1111,6 +1111,14 @@ function bindEvents() {
   els.setupSaveBtn.addEventListener('click', saveSetup);
 
   window.addEventListener('keydown', (event) => {
+    if (
+      event.key === 'Escape' &&
+      appConfig.role &&
+      !els.setupModal.classList.contains('hidden')
+    ) {
+      els.setupModal.classList.add('hidden');
+      return;
+    }
     if (event.key === 'Escape' && fullscreenStreamId) {
       toggleFullscreen(fullscreenStreamId);
       return;
