@@ -399,6 +399,52 @@ function updateStreamLivePresentation(tile, stream) {
   resumeView(view);
 }
 
+const CLEAN_WHATNOT_GUEST_CSS = [
+  'html, body {',
+  '  scrollbar-width: none !important;',
+  '  -ms-overflow-style: none !important;',
+  '}',
+  '* {',
+  '  scrollbar-width: none !important;',
+  '  -ms-overflow-style: none !important;',
+  '}',
+  '*::-webkit-scrollbar {',
+  '  width: 0 !important;',
+  '  height: 0 !important;',
+  '  display: none !important;',
+  '  background: transparent !important;',
+  '}',
+  '*::-webkit-scrollbar-thumb,',
+  '*::-webkit-scrollbar-track {',
+  '  background: transparent !important;',
+  '}'
+].join('\n');
+
+async function applyWhatnotCleanPresentation(view, stream) {
+  if (!view || platformFor(stream) !== 'Whatnot') return;
+
+  try {
+    if (typeof view.insertCSS === 'function') {
+      await view.insertCSS(CLEAN_WHATNOT_GUEST_CSS);
+    }
+  } catch (_) {}
+
+  try {
+    await view.executeJavaScript(`
+      (() => {
+        const id = 'swish-control-whatnot-clean';
+        let style = document.getElementById(id);
+        if (!style) {
+          style = document.createElement('style');
+          style.id = id;
+          (document.head || document.documentElement).appendChild(style);
+        }
+        style.textContent = ${JSON.stringify(CLEAN_WHATNOT_GUEST_CSS)};
+      })();
+    `);
+  } catch (_) {}
+}
+
 function createLegacyStreamWebview(stream) {
   const url = safeUrl(stream.url);
   if (!url) return null;
@@ -433,6 +479,7 @@ function createLegacyStreamWebview(stream) {
       view.setUserAgent(ua);
       applyProviderPresentation();
       applyStreamAudioState(view, streamMuted(stream.id));
+      applyWhatnotCleanPresentation(view, stream).catch(() => {});
       if (appConfig.role !== 'wall' && platformFor(stream) === 'Fanatics' && stream.roomId) {
         const tile = view.closest('.stream-tile');
         scheduleFanaticsResolution(view, stream, tile, 800);
@@ -443,6 +490,7 @@ function createLegacyStreamWebview(stream) {
   view.addEventListener('did-finish-load', () => {
     applyProviderPresentation();
     applyStreamAudioState(view, streamMuted(stream.id));
+    applyWhatnotCleanPresentation(view, stream).catch(() => {});
 
     if (appConfig.role !== 'wall' && platformFor(stream) === 'Fanatics' && stream.roomId) {
       const tile = view.closest('.stream-tile');
@@ -461,6 +509,7 @@ function createLegacyStreamWebview(stream) {
   });
 
   view.addEventListener('did-navigate', (event) => {
+    applyWhatnotCleanPresentation(view, stream).catch(() => {});
     if (appConfig.role === 'wall') return;
     if (platformFor(stream) !== 'Fanatics' || !stream.roomId) return;
     const resolvedUrl = String(view.dataset.swishFanaticsResolvedUrl || '');
@@ -476,6 +525,10 @@ function createLegacyStreamWebview(stream) {
       view.dataset.swishFanaticsResolvedUrl = '';
       loadFanaticsShop(view);
     }
+  });
+
+  view.addEventListener('did-navigate-in-page', () => {
+    applyWhatnotCleanPresentation(view, stream).catch(() => {});
   });
 
   return view;
