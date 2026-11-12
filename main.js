@@ -125,7 +125,9 @@ function loadStreams() {
   const saved = readJson(streamsFile, null);
   if (Array.isArray(saved) && saved.length >= 1 && saved.length <= 150) {
     let normalized = saved.map(normalizeStream);
-    let changed = false;
+    let changed = normalized.some((stream, index) =>
+      stream.url !== String(saved[index]?.url || '').trim()
+    );
 
     // Display-wall slot order: Hits in slot 2, Grails in slot 6, Poke WN in slot 10.
     const streamTwo = normalized.find((stream) => stream.id === 'stream-2') || normalized[1];
