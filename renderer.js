@@ -20,6 +20,8 @@ const $ = (id) => document.getElementById(id);
 
 const els = {
   techNav: $('techNav'),
+  settingsBtn: $('settingsBtn'),
+  wallSettingsBtn: $('wallSettingsBtn'),
   signInBtn: $('signInBtn'),
   profileBtn: $('profileBtn'),
   overviewPage: $('overviewPage'),
@@ -49,6 +51,10 @@ const els = {
   setupObsPassword: $('setupObsPassword'),
   setupBackBtn: $('setupBackBtn'),
   setupSaveBtn: $('setupSaveBtn'),
+  settingsModal: $('settingsModal'),
+  settingsCloseBtn: $('settingsCloseBtn'),
+  currentRoleLabel: $('currentRoleLabel'),
+  changeRoleBtn: $('changeRoleBtn'),
   loginModal: $('loginModal'),
   googleLoginBtn: $('googleLoginBtn'),
   loginEmail: $('loginEmail'),
@@ -302,6 +308,8 @@ function applyRoleUi() {
 
   document.body.classList.toggle('wall-mode', role === 'wall');
   document.body.classList.toggle('control-mode', role === 'control');
+  els.settingsBtn.classList.toggle('hidden', role !== 'control');
+  els.wallSettingsBtn.classList.toggle('hidden', role !== 'wall');
 
   if (role === 'wall') {
     els.techNav.classList.add('hidden');
@@ -995,6 +1003,31 @@ function showSetup() {
   document.querySelectorAll('.role-card').forEach((card) => card.classList.remove('selected'));
 }
 
+function roleLabel(role) {
+  if (role === 'wall') return 'Live Wall / Display Only';
+  if (role === 'control') return 'Control Center';
+  if (role === 'agent') return 'Room Agent';
+  return 'Not configured';
+}
+
+function openSettings() {
+  els.currentRoleLabel.textContent = roleLabel(appConfig.role);
+  els.settingsModal.classList.remove('hidden');
+}
+
+function closeSettings() {
+  els.settingsModal.classList.add('hidden');
+}
+
+function openRolePickerFromSettings() {
+  closeSettings();
+  els.setupServerUrl.value = appConfig.serverUrl || '';
+  els.setupRoomName.value = appConfig.roomName || '';
+  els.setupEnrollmentKey.value = '';
+  els.setupObsPassword.value = appConfig.obsWebSocketPassword || '';
+  showSetup();
+}
+
 function chooseSetupRole(role) {
   pendingRole = role;
   document.querySelectorAll('.role-card').forEach((card) => {
@@ -1046,6 +1079,11 @@ function bindEvents() {
     button.addEventListener('click', () => switchPage(button.dataset.page));
   });
 
+  els.settingsBtn.addEventListener('click', openSettings);
+  els.wallSettingsBtn.addEventListener('click', openSettings);
+  els.settingsCloseBtn.addEventListener('click', closeSettings);
+  els.changeRoleBtn.addEventListener('click', openRolePickerFromSettings);
+
   els.signInBtn.addEventListener('click', openLogin);
   els.profileBtn.addEventListener('click', signOut);
   els.loginCancelBtn.addEventListener('click', closeLogin);
@@ -1079,6 +1117,10 @@ function bindEvents() {
     }
     if (event.key === 'Escape' && !els.streamsModal.classList.contains('hidden')) {
       closeStreamsManager();
+      return;
+    }
+    if (event.key === 'Escape' && !els.settingsModal.classList.contains('hidden')) {
+      closeSettings();
       return;
     }
     if (event.key === 'Escape' && !els.loginModal.classList.contains('hidden')) {
