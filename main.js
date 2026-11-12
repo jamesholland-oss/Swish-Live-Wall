@@ -20,9 +20,9 @@ const SWISH_GRAILS_URL = 'https://www.tiktok.com/@swishgrails/live?enter_from_me
 const SWISH_HITS_URL = 'https://www.whatnot.com/live/84f6aeba-efa9-4a2f-8c39-793c45d19ac6?referringSource=profile';
 
 const DEFAULT_STREAMS = [
-  { id: 'stream-1', name: 'Swish Breaks FN', url: 'https://www.fanatics.live/shows/2fbba9a5-da47-443e-9944-e7f578aae30b', platform: 'Fanatics', roomId: '' },
+  { id: 'stream-1', name: 'Swish Breaks FN', url: 'https://www.fanatics.live/shows/2fbba9a5-da47-443e-9944-e7f578aae30b?bypassstillwatching=true', platform: 'Fanatics', roomId: '' },
   { id: 'stream-2', name: 'Swish Hits WN', url: SWISH_HITS_URL, platform: 'Whatnot', roomId: '' },
-  { id: 'stream-3', name: 'Swish Bats', url: 'https://www.fanatics.live/shows/debdca0f-bc98-4810-a2d1-e1e421787c26', platform: 'Fanatics', roomId: '' },
+  { id: 'stream-3', name: 'Swish Bats', url: 'https://www.fanatics.live/shows/debdca0f-bc98-4810-a2d1-e1e421787c26?bypassstillwatching=true', platform: 'Fanatics', roomId: '' },
   { id: 'stream-4', name: 'Swish Breaks WN', url: 'https://www.whatnot.com/live/ca5f2818-97f2-4814-88f8-b05d1a6226ef?referringSource=profile', platform: 'Whatnot', roomId: '' },
   { id: 'stream-5', name: 'Swish Smash WN', url: 'https://www.whatnot.com/live/620075d2-709d-4eba-a931-2b1208b9567f?referringSource=profile', platform: 'Whatnot', roomId: '' },
   { id: 'stream-6', name: 'Swish Grails', url: SWISH_GRAILS_URL, platform: 'TikTok', roomId: '' },
@@ -89,14 +89,32 @@ function inferPlatform(url) {
   return 'Other';
 }
 
+function withFanaticsStillWatchingBypass(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!value) return '';
+
+  try {
+    const url = new URL(value);
+    if (url.hostname === 'fanatics.live' || url.hostname.endsWith('.fanatics.live')) {
+      url.searchParams.set('bypassstillwatching', 'true');
+      return url.toString();
+    }
+  } catch (_) {}
+
+  return value;
+}
+
 function normalizeStream(stream, index) {
   const platform = ['Fanatics', 'Whatnot', 'TikTok', 'Other'].includes(stream.platform)
     ? stream.platform
     : inferPlatform(stream.url);
+  const rawUrl = String(stream.url || '').trim();
+  const url = platform === 'Fanatics' ? withFanaticsStillWatchingBypass(rawUrl) : rawUrl;
+
   return {
     id: String(stream.id || `stream-${Date.now()}-${index}`).trim(),
     name: String(stream.name || `Stream ${index + 1}`).trim(),
-    url: String(stream.url || '').trim(),
+    url,
     platform,
     roomId: String(stream.roomId || '').trim()
   };
