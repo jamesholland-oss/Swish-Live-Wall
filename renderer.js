@@ -487,7 +487,7 @@ function displayGridForCount(count) {
 }
 
 function applyDisplayOnlyGrid(count) {
-  if (appConfig.role !== 'wall') {
+  if (!['wall', 'control'].includes(appConfig.role)) {
     els.wallGrid.style.removeProperty('--wall-columns');
     els.wallGrid.style.removeProperty('--wall-rows');
     return;
