@@ -21,10 +21,13 @@
 
     <div class="top-actions">
       <span id="serverState" class="server-state hidden"><span class="server-state-dot"></span><span id="serverStateText">Server</span></span>
+      <button id="settingsBtn" class="ghost hidden" title="Settings">⚙ Settings</button>
       <button id="signInBtn" class="ghost hidden">Sign In</button>
       <button id="profileBtn" class="profile hidden" title="Control user"></button>
     </div>
   </header>
+
+  <button id="wallSettingsBtn" class="wall-settings-btn hidden" title="Settings" aria-label="Settings">⚙</button>
 
   <main id="appRoot" class="app-root">
     <section id="overviewPage" class="page hidden">
@@ -98,6 +101,27 @@
       <label>Password<input id="loginPassword" type="password" autocomplete="current-password" /></label>
       <div id="loginError" class="form-error hidden"></div>
       <div class="modal-actions"><button id="loginCancelBtn" class="ghost">Cancel</button><button id="loginSubmitBtn" class="primary">Sign In</button></div>
+    </div>
+  </div>
+
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-card settings-card">
+      <div class="modal-head-row settings-head">
+        <div>
+          <div class="modal-title">SWISH CONTROL</div>
+          <h2>Settings</h2>
+        </div>
+        <button id="settingsCloseBtn" class="icon-action">✕</button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-row">
+          <div>
+            <strong>Current Role</strong>
+            <span id="currentRoleLabel">—</span>
+          </div>
+          <button id="changeRoleBtn" class="ghost">Change Role</button>
+        </div>
+      </div>
     </div>
   </div>
 
